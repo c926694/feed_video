@@ -1,33 +1,30 @@
 package consumer
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log"
 	"simple_tiktok/internal/mq/event"
-	"simple_tiktok/internal/pkg/constants"
 	mysql2 "simple_tiktok/internal/repository/mysql"
+	"simple_tiktok/internal/service"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
-	"github.com/redis/go-redis/v9"
 )
 
 type LikeConsumer struct {
 	channel     *amqp.Channel
 	videoRepo   *mysql2.VideoRepo
 	commentRepo *mysql2.CommentRepo
-	redisClient *redis.Client
+	feedService *service.FeedService
 }
 
-func NewLikeConsumer(channel *amqp.Channel, videoRepo *mysql2.VideoRepo, commentRepo *mysql2.CommentRepo, redisClient *redis.Client) *LikeConsumer {
+func NewLikeConsumer(channel *amqp.Channel, videoRepo *mysql2.VideoRepo, commentRepo *mysql2.CommentRepo, feedService *service.FeedService) *LikeConsumer {
 	return &LikeConsumer{
 		channel:     channel,
 		videoRepo:   videoRepo,
 		commentRepo: commentRepo,
-		redisClient: redisClient,
+		feedService: feedService,
 	}
 }
 
@@ -100,9 +97,16 @@ func (c *LikeConsumer) LikeVideoHandler(msg amqp.Delivery) {
 		_ = msg.Nack(false, false)
 		return
 	}
-	c.invalidateVideoInfoCache(videoId)
+	if c.feedService != nil {
+		c.feedService.MustInvalidateVideoInfoCache(videoId)
+		if err := c.feedService.PublishVideoHotEvent(videoId, hotDelta); err != nil {
+			log.Println(err)
+			_ = msg.Nack(false, true)
+			return
+		}
+	}
 
-	if err := c.publishVideoHotEvent(videoId, hotDelta); err != nil {
+	if err := c.publishVideoHotEvent(videoId, 0); err != nil {
 		log.Println(err)
 		_ = msg.Nack(false, true)
 		return
@@ -148,6 +152,9 @@ func (c *LikeConsumer) LikeCommentHandler(msg amqp.Delivery) {
 }
 
 func (c *LikeConsumer) publishVideoHotEvent(videoId uint64, delta float64) error {
+	if delta == 0 {
+		return nil
+	}
 	msg, err := c.getVideoHotEventMsg(videoId, delta)
 	if err != nil {
 		return err
@@ -169,14 +176,4 @@ func (c *LikeConsumer) getVideoHotEventMsg(videoId uint64, delta float64) (amqp.
 		ContentType: "application/json",
 		Body:        data,
 	}, nil
-}
-
-func (c *LikeConsumer) invalidateVideoInfoCache(videoID uint64) {
-	if c.redisClient == nil {
-		return
-	}
-	cacheKey := fmt.Sprintf(constants.VideoInfoCacheKey, videoID)
-	if err := c.redisClient.Del(context.Background(), cacheKey).Err(); err != nil {
-		log.Println(err)
-	}
 }

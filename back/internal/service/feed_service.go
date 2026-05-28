@@ -2,15 +2,19 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"log"
 	"math"
 	"simple_tiktok/internal/dto/res"
+	"simple_tiktok/internal/mq/event"
 	"simple_tiktok/internal/pkg/constants"
 	"simple_tiktok/internal/pkg/util"
 	mysql2 "simple_tiktok/internal/repository/mysql"
 	"strconv"
 	"time"
 
+	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -18,13 +22,20 @@ type FeedService struct {
 	videoRepo   *mysql2.VideoRepo
 	userRepo    *mysql2.UserRepo
 	redisClient *redis.Client
+	hotMQ       *amqp.Channel
 }
 
-func NewFeedService(videoRepo *mysql2.VideoRepo, userRepo *mysql2.UserRepo, redisClient *redis.Client) *FeedService {
+func NewFeedService(
+	videoRepo *mysql2.VideoRepo,
+	userRepo *mysql2.UserRepo,
+	redisClient *redis.Client,
+	hotMQ *amqp.Channel,
+) *FeedService {
 	return &FeedService{
 		videoRepo:   videoRepo,
 		userRepo:    userRepo,
 		redisClient: redisClient,
+		hotMQ:       hotMQ,
 	}
 }
 
@@ -264,6 +275,30 @@ func (s *FeedService) RemoveVideoFromHotMinuteBuckets(videoID uint64, interval i
 	return err
 }
 
+func (s *FeedService) InvalidateVideoInfoCache(videoID uint64) error {
+	cacheKey := fmt.Sprintf(constants.VideoInfoCacheKey, videoID)
+	return s.redisClient.Del(context.Background(), cacheKey).Err()
+}
+
+func (s *FeedService) PublishVideoHotEvent(videoID uint64, delta float64) error {
+	if s.hotMQ == nil || delta == 0 {
+		return nil
+	}
+	data, err := json.Marshal(event.VideoHotEvent{
+		VideoId:     videoID,
+		ScoreDelta:  delta,
+		MinuteStamp: time.Now().UTC().Truncate(time.Minute).Unix(),
+	})
+	if err != nil {
+		return err
+	}
+	msg := amqp.Publishing{
+		ContentType: "application/json",
+		Body:        data,
+	}
+	return s.hotMQ.Publish(event.VideoHotExchange, event.VideoHotRoutingKey, false, false, msg)
+}
+
 func (s *FeedService) fillVideoAuthorAvatar(videoInfoList []res.VideoInfoRes) {
 	cache := make(map[uint64]res.UserInfoRes)
 	for i := range videoInfoList {
@@ -382,4 +417,10 @@ func (s *FeedService) getVideoInfoByIDs(ids []uint64) ([]res.VideoInfoRes, error
 		}
 	}
 	return videoInfoList, nil
+}
+
+func (s *FeedService) MustInvalidateVideoInfoCache(videoID uint64) {
+	if err := s.InvalidateVideoInfoCache(videoID); err != nil {
+		log.Println(err)
+	}
 }

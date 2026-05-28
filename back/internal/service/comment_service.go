@@ -2,20 +2,14 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"simple_tiktok/internal/dto/req"
 	"simple_tiktok/internal/dto/res"
 	"simple_tiktok/internal/model"
-	"simple_tiktok/internal/mq/event"
 	"simple_tiktok/internal/pkg/constants"
 	"simple_tiktok/internal/pkg/util"
 	mysql2 "simple_tiktok/internal/repository/mysql"
-	"time"
-
-	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -24,7 +18,7 @@ type CommentService struct {
 	videoRepo   *mysql2.VideoRepo
 	userRepo    *mysql2.UserRepo
 	redisClient *redis.Client
-	hotMQ       *amqp.Channel
+	feedService *FeedService
 }
 
 func NewCommentService(
@@ -32,14 +26,14 @@ func NewCommentService(
 	videoRepo *mysql2.VideoRepo,
 	userRepo *mysql2.UserRepo,
 	redisClient *redis.Client,
-	hotMQ *amqp.Channel,
+	feedService *FeedService,
 ) *CommentService {
 	return &CommentService{
 		commentRepo: commentRepo,
 		videoRepo:   videoRepo,
 		userRepo:    userRepo,
 		redisClient: redisClient,
-		hotMQ:       hotMQ,
+		feedService: feedService,
 	}
 }
 
@@ -70,8 +64,12 @@ func (s *CommentService) CreateComment(id uint64, req req.CommentReq) (res.Comme
 	if err = tx.Commit().Error; err != nil {
 		return res.CommentRes{}, err
 	}
-	s.invalidateVideoInfoCache(comment.VideoID)
-	s.publishVideoHotEvent(comment.VideoID, 1)
+	if s.feedService != nil {
+		s.feedService.MustInvalidateVideoInfoCache(comment.VideoID)
+		if err = s.feedService.PublishVideoHotEvent(comment.VideoID, 1); err != nil {
+			return res.CommentRes{}, err
+		}
+	}
 	commentRes := res.CommentRes{
 		Id:        comment.ID,
 		VideoId:   comment.VideoID,
@@ -111,8 +109,12 @@ func (s *CommentService) DeleteComment(userId uint64, id uint64) error {
 	if err = tx.Commit().Error; err != nil {
 		return err
 	}
-	s.invalidateVideoInfoCache(comment.VideoID)
-	s.publishVideoHotEvent(comment.VideoID, -1)
+	if s.feedService != nil {
+		s.feedService.MustInvalidateVideoInfoCache(comment.VideoID)
+		if err = s.feedService.PublishVideoHotEvent(comment.VideoID, -1); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -164,31 +166,4 @@ func (s *CommentService) ListByVideoId(videoId uint64, userId uint64) ([]res.Com
 		commentResList = append(commentResList, commentRes)
 	}
 	return commentResList, nil
-}
-
-func (s *CommentService) publishVideoHotEvent(videoId uint64, delta float64) {
-	if s.hotMQ == nil {
-		return
-	}
-	data, err := json.Marshal(event.VideoHotEvent{
-		VideoId:     videoId,
-		ScoreDelta:  delta,
-		MinuteStamp: time.Now().UTC().Truncate(time.Minute).Unix(),
-	})
-	if err != nil {
-		log.Println(err)
-		return
-	}
-	msg := amqp.Publishing{
-		ContentType: "application/json",
-		Body:        data,
-	}
-	if err := s.hotMQ.Publish(event.VideoHotExchange, event.VideoHotRoutingKey, false, false, msg); err != nil {
-		log.Println(err)
-	}
-}
-
-func (s *CommentService) invalidateVideoInfoCache(videoID uint64) {
-	cacheKey := fmt.Sprintf(constants.VideoInfoCacheKey, videoID)
-	_ = s.redisClient.Del(context.Background(), cacheKey).Err()
 }

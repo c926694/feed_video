@@ -22,7 +22,8 @@ func NewModule(ctx modulekit.Context) (*Module, error) {
 	if err != nil {
 		return nil, err
 	}
-	commentService := service.NewCommentService(commentRepo, videoRepo, userRepo, ctx.Redis, hotMQ)
+	feedService := service.NewFeedService(videoRepo, userRepo, ctx.Redis, hotMQ)
+	commentService := service.NewCommentService(commentRepo, videoRepo, userRepo, ctx.Redis, feedService)
 	return &Module{
 		controller: controller.NewCommentController(commentService),
 		redis:      ctx.Redis,

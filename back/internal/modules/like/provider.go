@@ -29,7 +29,8 @@ func NewModule(ctx modulekit.Context) (*Module, error) {
 	}
 	videoRepo := mysqlrepo.NewVideoRepo(ctx.DB)
 	commentRepo := mysqlrepo.NewCommentRepo(ctx.DB)
-	likeConsumer := consumer2.NewLikeConsumer(consumerChannel, videoRepo, commentRepo, ctx.Redis)
+	feedService := service.NewFeedService(videoRepo, mysqlrepo.NewUserRepo(ctx.DB), ctx.Redis, consumerChannel)
+	likeConsumer := consumer2.NewLikeConsumer(consumerChannel, videoRepo, commentRepo, feedService)
 
 	return &Module{
 		controller:   controller.NewLikeController(likeService),
