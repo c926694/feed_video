@@ -15,7 +15,6 @@ import (
 	"simple_tiktok/internal/pkg/jwt"
 	"simple_tiktok/internal/pkg/upload"
 	"simple_tiktok/internal/pkg/util"
-	mysqlrepo "simple_tiktok/internal/repository/mysql"
 	"strings"
 	"time"
 
@@ -24,12 +23,12 @@ import (
 )
 
 type Service struct {
-	userRepo  *mysqlrepo.UserRepo
-	videoRepo *mysqlrepo.VideoRepo
+	userRepo  *UserRepo
+	videoRepo *VideoRepo
 	userRedis *redis.Client
 }
 
-func NewService(userRepo *mysqlrepo.UserRepo, videoRepo *mysqlrepo.VideoRepo, redisClient *redis.Client) *Service {
+func NewService(userRepo *UserRepo, videoRepo *VideoRepo, redisClient *redis.Client) *Service {
 	return &Service{
 		userRepo:  userRepo,
 		videoRepo: videoRepo,

@@ -9,24 +9,23 @@ import (
 	"simple_tiktok/internal/model"
 	"simple_tiktok/internal/pkg/constants"
 	"simple_tiktok/internal/pkg/util"
-	mysql2 "simple_tiktok/internal/repository/mysql"
 	"simple_tiktok/internal/service"
 
 	"github.com/redis/go-redis/v9"
 )
 
 type Service struct {
-	commentRepo *mysql2.CommentRepo
-	videoRepo   *mysql2.VideoRepo
-	userRepo    *mysql2.UserRepo
+	commentRepo *CommentRepo
+	videoRepo   *VideoRepo
+	userRepo    *UserRepo
 	redisClient *redis.Client
 	feedService *service.FeedService
 }
 
 func NewService(
-	commentRepo *mysql2.CommentRepo,
-	videoRepo *mysql2.VideoRepo,
-	userRepo *mysql2.UserRepo,
+	commentRepo *CommentRepo,
+	videoRepo *VideoRepo,
+	userRepo *UserRepo,
 	redisClient *redis.Client,
 	feedService *service.FeedService,
 ) *Service {

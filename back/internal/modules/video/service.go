@@ -13,7 +13,6 @@ import (
 	"simple_tiktok/internal/pkg/constants"
 	"simple_tiktok/internal/pkg/upload"
 	"simple_tiktok/internal/pkg/util"
-	mysql2 "simple_tiktok/internal/repository/mysql"
 	"simple_tiktok/internal/service"
 	"strconv"
 	"strings"
@@ -25,11 +24,11 @@ import (
 )
 
 type Service struct {
-	videoRepo   *mysql2.VideoRepo
-	userRepo    *mysql2.UserRepo
+	videoRepo   *VideoRepo
+	userRepo    *UserRepo
 	redisClient *redis.Client
 	videoMQ     *amqp.Channel
-	commentRepo *mysql2.CommentRepo
+	commentRepo *CommentRepo
 	feedService *service.FeedService
 }
 
@@ -56,11 +55,11 @@ return 0
 `)
 
 func NewService(
-	videoRepo *mysql2.VideoRepo,
-	userRepo *mysql2.UserRepo,
+	videoRepo *VideoRepo,
+	userRepo *UserRepo,
 	redisClient *redis.Client,
 	videoMQ *amqp.Channel,
-	commentRepo *mysql2.CommentRepo,
+	commentRepo *CommentRepo,
 	feedService *service.FeedService,
 ) *Service {
 	return &Service{

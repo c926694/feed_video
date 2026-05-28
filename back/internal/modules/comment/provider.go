@@ -2,7 +2,6 @@ package comment
 
 import (
 	"simple_tiktok/internal/modulekit"
-	mysqlrepo "simple_tiktok/internal/repository/mysql"
 	"simple_tiktok/internal/service"
 
 	"github.com/redis/go-redis/v9"
@@ -14,9 +13,9 @@ type Module struct {
 }
 
 func NewModule(ctx modulekit.Context) (*Module, error) {
-	commentRepo := mysqlrepo.NewCommentRepo(ctx.DB)
-	videoRepo := mysqlrepo.NewVideoRepo(ctx.DB)
-	userRepo := mysqlrepo.NewUserRepo(ctx.DB)
+	commentRepo := NewCommentRepo(ctx.DB)
+	videoRepo := NewVideoRepo(ctx.DB)
+	userRepo := NewUserRepo(ctx.DB)
 	hotMQ, err := ctx.RabbitConn.Channel()
 	if err != nil {
 		return nil, err

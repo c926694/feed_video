@@ -5,17 +5,16 @@ import (
 	"simple_tiktok/internal/middleware"
 	"simple_tiktok/internal/pkg/response"
 	"simple_tiktok/internal/pkg/type_convert"
-	"simple_tiktok/internal/service"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
 )
 
 type HTTPHandler struct {
-	service *service.FollowService
+	service *Service
 }
 
-func NewHTTPHandler(followService *service.FollowService) *HTTPHandler {
+func NewHTTPHandler(followService *Service) *HTTPHandler {
 	return &HTTPHandler{
 		service: followService,
 	}

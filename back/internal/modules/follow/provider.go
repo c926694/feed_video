@@ -3,8 +3,6 @@ package follow
 import (
 	"simple_tiktok/internal/modulekit"
 	consumer2 "simple_tiktok/internal/mq/consumer"
-	mysqlrepo "simple_tiktok/internal/repository/mysql"
-	"simple_tiktok/internal/service"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -20,14 +18,14 @@ func NewModule(ctx modulekit.Context) (*Module, error) {
 	if err != nil {
 		return nil, err
 	}
-	followService := service.NewFollowService(ctx.Redis, serviceChannel)
+	followService := NewService(ctx.Redis, serviceChannel)
 
 	consumerChannel, err := ctx.RabbitConn.Channel()
 	if err != nil {
 		return nil, err
 	}
-	followRepo := mysqlrepo.NewFollowRepo(ctx.DB)
-	userRepo := mysqlrepo.NewUserRepo(ctx.DB)
+	followRepo := NewFollowRepo(ctx.DB)
+	userRepo := NewUserRepo(ctx.DB)
 	followConsumer := consumer2.NewFollowConsumer(consumerChannel, followRepo, userRepo)
 
 	return &Module{
