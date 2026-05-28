@@ -1,4 +1,4 @@
-package service
+package comment
 
 import (
 	"context"
@@ -10,25 +10,27 @@ import (
 	"simple_tiktok/internal/pkg/constants"
 	"simple_tiktok/internal/pkg/util"
 	mysql2 "simple_tiktok/internal/repository/mysql"
+	"simple_tiktok/internal/service"
+
 	"github.com/redis/go-redis/v9"
 )
 
-type CommentService struct {
+type Service struct {
 	commentRepo *mysql2.CommentRepo
 	videoRepo   *mysql2.VideoRepo
 	userRepo    *mysql2.UserRepo
 	redisClient *redis.Client
-	feedService *FeedService
+	feedService *service.FeedService
 }
 
-func NewCommentService(
+func NewService(
 	commentRepo *mysql2.CommentRepo,
 	videoRepo *mysql2.VideoRepo,
 	userRepo *mysql2.UserRepo,
 	redisClient *redis.Client,
-	feedService *FeedService,
-) *CommentService {
-	return &CommentService{
+	feedService *service.FeedService,
+) *Service {
+	return &Service{
 		commentRepo: commentRepo,
 		videoRepo:   videoRepo,
 		userRepo:    userRepo,
@@ -37,7 +39,7 @@ func NewCommentService(
 	}
 }
 
-func (s *CommentService) CreateComment(id uint64, req req.CommentReq) (res.CommentRes, error) {
+func (s *Service) CreateComment(userID uint64, commentReq req.CommentReq) (res.CommentRes, error) {
 	tx := s.commentRepo.DB().Begin()
 	if tx.Error != nil {
 		return res.CommentRes{}, tx.Error
@@ -46,16 +48,15 @@ func (s *CommentService) CreateComment(id uint64, req req.CommentReq) (res.Comme
 	videoRepoTx := s.videoRepo.WithTx(tx)
 
 	comment := &model.Comment{
-		Content:   req.Content,
-		VideoID:   req.VideoId,
-		Commenter: id,
+		Content:   commentReq.Content,
+		VideoID:   commentReq.VideoId,
+		Commenter: userID,
 	}
 	err := commentRepoTx.Save(comment)
 	if err != nil {
 		_ = tx.Rollback().Error
 		return res.CommentRes{}, err
 	}
-	//更新comment_count
 	err = videoRepoTx.UpdateCommentCount(comment.VideoID)
 	if err != nil {
 		_ = tx.Rollback().Error
@@ -70,23 +71,22 @@ func (s *CommentService) CreateComment(id uint64, req req.CommentReq) (res.Comme
 			return res.CommentRes{}, err
 		}
 	}
-	commentRes := res.CommentRes{
+	return res.CommentRes{
 		Id:        comment.ID,
 		VideoId:   comment.VideoID,
 		Commenter: comment.Commenter,
 		Content:   comment.Content,
 		LikeCount: comment.LikeCount,
 		CreatedAt: comment.CreatedAt,
-	}
-	return commentRes, nil
+	}, nil
 }
 
-func (s *CommentService) DeleteComment(userId uint64, id uint64) error {
-	comment, err := s.commentRepo.GetById(id)
+func (s *Service) DeleteComment(userID uint64, commentID uint64) error {
+	comment, err := s.commentRepo.GetById(commentID)
 	if err != nil {
 		return err
 	}
-	if comment.Commenter != userId {
+	if comment.Commenter != userID {
 		return errors.New("无法删除他人评论")
 	}
 	tx := s.commentRepo.DB().Begin()
@@ -96,7 +96,7 @@ func (s *CommentService) DeleteComment(userId uint64, id uint64) error {
 	commentRepoTx := s.commentRepo.WithTx(tx)
 	videoRepoTx := s.videoRepo.WithTx(tx)
 
-	err = commentRepoTx.DeleteComment(id)
+	err = commentRepoTx.DeleteComment(commentID)
 	if err != nil {
 		_ = tx.Rollback().Error
 		return err
@@ -118,8 +118,8 @@ func (s *CommentService) DeleteComment(userId uint64, id uint64) error {
 	return nil
 }
 
-func (s *CommentService) ListByVideoId(videoId uint64, userId uint64) ([]res.CommentRes, error) {
-	commentList, err := s.commentRepo.ListByVideoId(videoId)
+func (s *Service) ListByVideoId(videoID uint64, userID uint64) ([]res.CommentRes, error) {
+	commentList, err := s.commentRepo.ListByVideoId(videoID)
 	if err != nil {
 		return nil, err
 	}
@@ -149,11 +149,11 @@ func (s *CommentService) ListByVideoId(videoId uint64, userId uint64) ([]res.Com
 			authorCache[comment.Commenter] = author
 		}
 		likeKey := fmt.Sprintf(constants.LikeComment, comment.ID)
-		isLiked, likeErr := s.redisClient.SIsMember(context.Background(), likeKey, userId).Result()
+		isLiked, likeErr := s.redisClient.SIsMember(context.Background(), likeKey, userID).Result()
 		if likeErr != nil {
 			return nil, likeErr
 		}
-		commentRes := res.CommentRes{
+		commentResList = append(commentResList, res.CommentRes{
 			Id:        comment.ID,
 			VideoId:   comment.VideoID,
 			Commenter: comment.Commenter,
@@ -162,8 +162,7 @@ func (s *CommentService) ListByVideoId(videoId uint64, userId uint64) ([]res.Com
 			IsLiked:   isLiked,
 			Author:    author,
 			CreatedAt: comment.CreatedAt,
-		}
-		commentResList = append(commentResList, commentRes)
+		})
 	}
 	return commentResList, nil
 }

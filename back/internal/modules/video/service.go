@@ -1,4 +1,4 @@
-package service
+package video
 
 import (
 	"context"
@@ -14,24 +14,23 @@ import (
 	"simple_tiktok/internal/pkg/upload"
 	"simple_tiktok/internal/pkg/util"
 	mysql2 "simple_tiktok/internal/repository/mysql"
+	"simple_tiktok/internal/service"
 	"strconv"
 	"strings"
 	"time"
-
-	//"github.com/redis/go-redis/v9"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )
 
-type VideoService struct {
+type Service struct {
 	videoRepo   *mysql2.VideoRepo
 	userRepo    *mysql2.UserRepo
 	redisClient *redis.Client
 	videoMQ     *amqp.Channel
 	commentRepo *mysql2.CommentRepo
-	feedService *FeedService
+	feedService *service.FeedService
 }
 
 type videoInfoCacheEnvelope struct {
@@ -56,15 +55,15 @@ end
 return 0
 `)
 
-func NewVideoService(
+func NewService(
 	videoRepo *mysql2.VideoRepo,
 	userRepo *mysql2.UserRepo,
 	redisClient *redis.Client,
 	videoMQ *amqp.Channel,
 	commentRepo *mysql2.CommentRepo,
-	feedService *FeedService,
-) *VideoService {
-	return &VideoService{
+	feedService *service.FeedService,
+) *Service {
+	return &Service{
 		videoRepo:   videoRepo,
 		userRepo:    userRepo,
 		redisClient: redisClient,
@@ -74,15 +73,15 @@ func NewVideoService(
 	}
 }
 
-func (s *VideoService) CreateVideo(req req.UploadVideoReq, userId uint64, nickName string) (res.VideoRes, error) {
-	cover := req.Cover
-	play := req.Play
-	title := req.Title
-	description := req.Description
+func (s *Service) CreateVideo(uploadReq req.UploadVideoReq, userID uint64, nickName string) (res.VideoRes, error) {
+	cover := uploadReq.Cover
+	play := uploadReq.Play
+	title := uploadReq.Title
+	description := uploadReq.Description
 
 	authorName := strings.TrimSpace(nickName)
 	if s.userRepo != nil {
-		user, userErr := s.userRepo.GetUserByID(userId)
+		user, userErr := s.userRepo.GetUserByID(userID)
 		if userErr == nil && user != nil {
 			currentNickName := strings.TrimSpace(user.NickName)
 			if currentNickName != "" {
@@ -108,7 +107,7 @@ func (s *VideoService) CreateVideo(req req.UploadVideoReq, userId uint64, nickNa
 	video := model.Video{
 		Title:       title,
 		Description: description,
-		AuthorID:    userId,
+		AuthorID:    userID,
 		PlayURL:     playPath,
 		CoverURL:    coverPath,
 		AuthorName:  authorName,
@@ -139,8 +138,8 @@ func (s *VideoService) CreateVideo(req req.UploadVideoReq, userId uint64, nickNa
 	}, nil
 }
 
-func (s *VideoService) GetMyVideos(userId uint64, limit uint64) ([]res.VideoInfoRes, error) {
-	videoList, err := s.videoRepo.ListByAuthorID(userId, limit)
+func (s *Service) GetMyVideos(userID uint64, limit uint64) ([]res.VideoInfoRes, error) {
+	videoList, err := s.videoRepo.ListByAuthorID(userID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -160,16 +159,101 @@ func (s *VideoService) GetMyVideos(userId uint64, limit uint64) ([]res.VideoInfo
 		}
 	}
 	s.fillVideoAuthorAvatar(videoInfoList)
-	if err = s.fillVideoLikeStatus(videoInfoList, userId); err != nil {
+	if err = s.fillVideoLikeStatus(videoInfoList, userID); err != nil {
 		return nil, err
 	}
-	if err = s.fillVideoFollowStatus(videoInfoList, userId); err != nil {
+	if err = s.fillVideoFollowStatus(videoInfoList, userID); err != nil {
 		return nil, err
 	}
 	return videoInfoList, nil
 }
 
-func (s *VideoService) fillVideoAuthorAvatar(videoInfoList []res.VideoInfoRes) {
+func (s *Service) GetVideoInfo(videoID uint64, userID uint64) (res.VideoInfoRes, error) {
+	videoInfo, exists, err := s.getVideoInfoBaseWithCache(videoID)
+	if err != nil {
+		return res.VideoInfoRes{}, err
+	}
+	if !exists {
+		return res.VideoInfoRes{}, gorm.ErrRecordNotFound
+	}
+	videoInfoList := []res.VideoInfoRes{videoInfo}
+	if err = s.fillVideoLikeStatus(videoInfoList, userID); err != nil {
+		return res.VideoInfoRes{}, err
+	}
+	if err = s.fillVideoFollowStatus(videoInfoList, userID); err != nil {
+		return res.VideoInfoRes{}, err
+	}
+	return videoInfoList[0], nil
+}
+
+func (s *Service) DeleteVideo(videoID uint64, userID uint64) error {
+	tx := s.videoRepo.DB().Begin()
+	video, err := s.videoRepo.GetVideoById(videoID)
+	if err != nil {
+		return err
+	}
+	if video.AuthorID != userID {
+		_ = tx.Rollback()
+		return errors.New("no permission to delete this video")
+	}
+
+	commentRepo := s.commentRepo.WithTx(tx)
+	commentList, err := commentRepo.ListByVideoId(videoID)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+
+	videoRepo := s.videoRepo.WithTx(tx)
+	if err := videoRepo.DeleteVideoById(videoID); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := commentRepo.DeleteByVideoId(videoID); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := tx.Commit().Error; err != nil {
+		return err
+	}
+
+	if s.feedService != nil {
+		if err := s.feedService.RemoveVideoFromFeed(videoID); err != nil {
+			return err
+		}
+		if err := s.feedService.RemoveVideoFromHotMinuteBuckets(videoID, 1440); err != nil {
+			return err
+		}
+	}
+	s.invalidateVideoInfoCache(videoID)
+
+	likeKey := fmt.Sprintf(constants.LikeVideo, videoID)
+	if err := s.redisClient.Del(context.Background(), likeKey).Err(); err != nil {
+		return err
+	}
+	if len(commentList) > 0 {
+		commentLikeKeys := make([]string, 0, len(commentList))
+		for _, comment := range commentList {
+			commentLikeKeys = append(commentLikeKeys, fmt.Sprintf(constants.LikeComment, comment.ID))
+		}
+		if err := s.redisClient.Del(context.Background(), commentLikeKeys...).Err(); err != nil {
+			return err
+		}
+	}
+
+	videoProducer := s.videoMQ
+	msg, err := s.getDeleteVideoEvent(video)
+	if err != nil {
+		return err
+	}
+	err = videoProducer.Publish(event.DeleteVideoExchange, event.DeleteVideoRoutingKey, false, false, msg)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Service) fillVideoAuthorAvatar(videoInfoList []res.VideoInfoRes) {
 	if s.userRepo == nil {
 		return
 	}
@@ -206,10 +290,10 @@ func (s *VideoService) fillVideoAuthorAvatar(videoInfoList []res.VideoInfoRes) {
 	}
 }
 
-func (s *VideoService) fillVideoLikeStatus(videoInfoList []res.VideoInfoRes, userId uint64) error {
+func (s *Service) fillVideoLikeStatus(videoInfoList []res.VideoInfoRes, userID uint64) error {
 	for i := range videoInfoList {
 		likeKey := fmt.Sprintf(constants.LikeVideo, videoInfoList[i].Id)
-		isLiked, err := s.redisClient.SIsMember(context.Background(), likeKey, userId).Result()
+		isLiked, err := s.redisClient.SIsMember(context.Background(), likeKey, userID).Result()
 		if err != nil {
 			return err
 		}
@@ -218,10 +302,10 @@ func (s *VideoService) fillVideoLikeStatus(videoInfoList []res.VideoInfoRes, use
 	return nil
 }
 
-func (s *VideoService) fillVideoFollowStatus(videoInfoList []res.VideoInfoRes, userId uint64) error {
-	followKey := fmt.Sprintf(constants.FollowKey, userId)
+func (s *Service) fillVideoFollowStatus(videoInfoList []res.VideoInfoRes, userID uint64) error {
+	followKey := fmt.Sprintf(constants.FollowKey, userID)
 	for i := range videoInfoList {
-		if videoInfoList[i].AuthorID == 0 || videoInfoList[i].AuthorID == userId {
+		if videoInfoList[i].AuthorID == 0 || videoInfoList[i].AuthorID == userID {
 			videoInfoList[i].IsFollow = false
 			continue
 		}
@@ -234,25 +318,7 @@ func (s *VideoService) fillVideoFollowStatus(videoInfoList []res.VideoInfoRes, u
 	return nil
 }
 
-func (s *VideoService) GetVideoInfo(id uint64, userId uint64) (res.VideoInfoRes, error) {
-	videoInfo, exists, err := s.getVideoInfoBaseWithCache(id)
-	if err != nil {
-		return res.VideoInfoRes{}, err
-	}
-	if !exists {
-		return res.VideoInfoRes{}, gorm.ErrRecordNotFound
-	}
-	videoInfoList := []res.VideoInfoRes{videoInfo}
-	if err = s.fillVideoLikeStatus(videoInfoList, userId); err != nil {
-		return res.VideoInfoRes{}, err
-	}
-	if err = s.fillVideoFollowStatus(videoInfoList, userId); err != nil {
-		return res.VideoInfoRes{}, err
-	}
-	return videoInfoList[0], nil
-}
-
-func (s *VideoService) getVideoInfoBaseWithCache(videoID uint64) (res.VideoInfoRes, bool, error) {
+func (s *Service) getVideoInfoBaseWithCache(videoID uint64) (res.VideoInfoRes, bool, error) {
 	ctx := context.Background()
 	cacheKey := fmt.Sprintf(constants.VideoInfoCacheKey, videoID)
 	raw, err := s.redisClient.Get(ctx, cacheKey).Result()
@@ -281,7 +347,7 @@ func (s *VideoService) getVideoInfoBaseWithCache(videoID uint64) (res.VideoInfoR
 	return s.rebuildVideoInfoCacheOnMiss(videoID)
 }
 
-func (s *VideoService) rebuildVideoInfoCacheOnMiss(videoID uint64) (res.VideoInfoRes, bool, error) {
+func (s *Service) rebuildVideoInfoCacheOnMiss(videoID uint64) (res.VideoInfoRes, bool, error) {
 	ctx := context.Background()
 	cacheKey := fmt.Sprintf(constants.VideoInfoCacheKey, videoID)
 	lockKey := fmt.Sprintf(constants.VideoInfoLockKey, videoID)
@@ -332,7 +398,7 @@ func (s *VideoService) rebuildVideoInfoCacheOnMiss(videoID uint64) (res.VideoInf
 	return s.loadVideoInfoFromDBAndWriteCache(videoID)
 }
 
-func (s *VideoService) tryRefreshVideoInfoCacheAsync(videoID uint64) {
+func (s *Service) tryRefreshVideoInfoCacheAsync(videoID uint64) {
 	ctx := context.Background()
 	lockKey := fmt.Sprintf(constants.VideoInfoLockKey, videoID)
 	lockValue := strconv.FormatInt(time.Now().UnixNano(), 10)
@@ -346,7 +412,7 @@ func (s *VideoService) tryRefreshVideoInfoCacheAsync(videoID uint64) {
 	}()
 }
 
-func (s *VideoService) loadVideoInfoFromDBAndWriteCache(videoID uint64) (res.VideoInfoRes, bool, error) {
+func (s *Service) loadVideoInfoFromDBAndWriteCache(videoID uint64) (res.VideoInfoRes, bool, error) {
 	videoInfo, err := s.loadVideoInfoBaseFromDB(videoID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -371,7 +437,7 @@ func (s *VideoService) loadVideoInfoFromDBAndWriteCache(videoID uint64) (res.Vid
 	return videoInfo, true, nil
 }
 
-func (s *VideoService) loadVideoInfoBaseFromDB(videoID uint64) (res.VideoInfoRes, error) {
+func (s *Service) loadVideoInfoBaseFromDB(videoID uint64) (res.VideoInfoRes, error) {
 	video, err := s.videoRepo.GetVideoById(videoID)
 	if err != nil {
 		return res.VideoInfoRes{}, err
@@ -393,7 +459,7 @@ func (s *VideoService) loadVideoInfoBaseFromDB(videoID uint64) (res.VideoInfoRes
 	return videoInfoList[0], nil
 }
 
-func (s *VideoService) setVideoInfoCacheEnvelope(videoID uint64, envelope videoInfoCacheEnvelope) error {
+func (s *Service) setVideoInfoCacheEnvelope(videoID uint64, envelope videoInfoCacheEnvelope) error {
 	data, err := json.Marshal(envelope)
 	if err != nil {
 		return err
@@ -402,7 +468,7 @@ func (s *VideoService) setVideoInfoCacheEnvelope(videoID uint64, envelope videoI
 	return s.redisClient.Set(context.Background(), cacheKey, data, videoInfoPhysicalTTL).Err()
 }
 
-func (s *VideoService) parseVideoInfoCacheEnvelope(raw string) (videoInfoCacheEnvelope, error) {
+func (s *Service) parseVideoInfoCacheEnvelope(raw string) (videoInfoCacheEnvelope, error) {
 	var envelope videoInfoCacheEnvelope
 	if err := json.Unmarshal([]byte(raw), &envelope); err != nil {
 		return videoInfoCacheEnvelope{}, err
@@ -410,84 +476,16 @@ func (s *VideoService) parseVideoInfoCacheEnvelope(raw string) (videoInfoCacheEn
 	return envelope, nil
 }
 
-func (s *VideoService) releaseVideoInfoLock(lockKey string, lockValue string) {
+func (s *Service) releaseVideoInfoLock(lockKey string, lockValue string) {
 	_ = unlockVideoInfoLockScript.Run(context.Background(), s.redisClient, []string{lockKey}, lockValue).Err()
 }
 
-func (s *VideoService) invalidateVideoInfoCache(videoID uint64) {
+func (s *Service) invalidateVideoInfoCache(videoID uint64) {
 	cacheKey := fmt.Sprintf(constants.VideoInfoCacheKey, videoID)
 	_ = s.redisClient.Del(context.Background(), cacheKey).Err()
 }
 
-func (s *VideoService) DeleteVideo(id uint64, userId uint64) error {
-	tx := s.videoRepo.DB().Begin()
-	video, err := s.videoRepo.GetVideoById(id)
-	if err != nil {
-		return err
-	}
-	if video.AuthorID != userId {
-		_ = tx.Rollback()
-		return errors.New("no permission to delete this video")
-	}
-
-	commentRepo := s.commentRepo.WithTx(tx)
-	commentList, err := commentRepo.ListByVideoId(id)
-	if err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-
-	videoRepo := s.videoRepo.WithTx(tx)
-	if err := videoRepo.DeleteVideoById(id); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-	if err := commentRepo.DeleteByVideoId(id); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-	if err := tx.Commit().Error; err != nil {
-		return err
-	}
-
-	if s.feedService != nil {
-		if err := s.feedService.RemoveVideoFromFeed(id); err != nil {
-			return err
-		}
-		if err := s.feedService.RemoveVideoFromHotMinuteBuckets(id, 1440); err != nil {
-			return err
-		}
-	}
-	s.invalidateVideoInfoCache(id)
-
-	likeKey := fmt.Sprintf(constants.LikeVideo, id)
-	if err := s.redisClient.Del(context.Background(), likeKey).Err(); err != nil {
-		return err
-	}
-	if len(commentList) > 0 {
-		commentLikeKeys := make([]string, 0, len(commentList))
-		for _, comment := range commentList {
-			commentLikeKeys = append(commentLikeKeys, fmt.Sprintf(constants.LikeComment, comment.ID))
-		}
-		if err := s.redisClient.Del(context.Background(), commentLikeKeys...).Err(); err != nil {
-			return err
-		}
-	}
-
-	videoProducer := s.videoMQ
-	msg, err := s.getDeleteVideoEvent(video)
-	if err != nil {
-		return err
-	}
-	err = videoProducer.Publish(event.DeleteVideoExchange,
-		event.DeleteVideoRoutingKey, false, false, msg)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (s *VideoService) getDeleteVideoEvent(video model.Video) (amqp.Publishing, error) {
+func (s *Service) getDeleteVideoEvent(video model.Video) (amqp.Publishing, error) {
 	deleteVideoEvent := event.DeleteVideoEvent{
 		PlayURL:  video.PlayURL,
 		CoverURL: video.CoverURL,
@@ -496,9 +494,8 @@ func (s *VideoService) getDeleteVideoEvent(video model.Video) (amqp.Publishing, 
 	if err != nil {
 		return amqp.Publishing{}, err
 	}
-	msg := amqp.Publishing{
+	return amqp.Publishing{
 		ContentType: "application/json",
 		Body:        data,
-	}
-	return msg, nil
+	}, nil
 }

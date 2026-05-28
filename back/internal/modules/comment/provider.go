@@ -22,7 +22,7 @@ func NewModule(ctx modulekit.Context) (*Module, error) {
 		return nil, err
 	}
 	feedService := service.NewFeedService(videoRepo, userRepo, ctx.Redis, hotMQ)
-	commentService := service.NewCommentService(commentRepo, videoRepo, userRepo, ctx.Redis, feedService)
+	commentService := NewService(commentRepo, videoRepo, userRepo, ctx.Redis, feedService)
 	return &Module{
 		httpHandler: NewHTTPHandler(commentService),
 		redis:      ctx.Redis,

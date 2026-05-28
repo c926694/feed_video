@@ -39,7 +39,7 @@ func NewFeedService(
 	}
 }
 
-func (s *FeedService) GetFeedVideos(limit uint64, lastScore float64, key string, userId uint64) ([]res.VideoInfoRes, float64, error) {
+func (s *FeedService) GetFeedVideos(limit uint64, lastScore float64, key string, userID uint64) ([]res.VideoInfoRes, float64, error) {
 	ids, err := s.GetFeedVideoIds(limit, lastScore, key)
 	if err != nil {
 		return nil, 0.0, err
@@ -53,17 +53,17 @@ func (s *FeedService) GetFeedVideos(limit uint64, lastScore float64, key string,
 	}
 	videoInfoList = s.reorderExistingVideoInfos(videoInfoList, ids)
 	s.fillVideoAuthorAvatar(videoInfoList)
-	if err = s.fillVideoLikeStatus(videoInfoList, userId); err != nil {
+	if err = s.fillVideoLikeStatus(videoInfoList, userID); err != nil {
 		return nil, 0.0, err
 	}
-	if err = s.fillVideoFollowStatus(videoInfoList, userId); err != nil {
+	if err = s.fillVideoFollowStatus(videoInfoList, userID); err != nil {
 		return nil, 0.0, err
 	}
 	nextScore := float64(videoInfoList[len(videoInfoList)-1].CreatedAt.UnixMicro())
 	return videoInfoList, nextScore, nil
 }
 
-func (s *FeedService) GetFeedHotVideos(limit uint64, offset uint64, interval int, userId uint64) ([]res.VideoInfoRes, uint64, bool, error) {
+func (s *FeedService) GetFeedHotVideos(limit uint64, offset uint64, interval int, userID uint64) ([]res.VideoInfoRes, uint64, bool, error) {
 	if limit == 0 {
 		limit = 5
 	}
@@ -92,17 +92,17 @@ func (s *FeedService) GetFeedHotVideos(limit uint64, offset uint64, interval int
 	}
 
 	s.fillVideoAuthorAvatar(videoInfoList)
-	if err = s.fillVideoLikeStatus(videoInfoList, userId); err != nil {
+	if err = s.fillVideoLikeStatus(videoInfoList, userID); err != nil {
 		return nil, offset, false, err
 	}
-	if err = s.fillVideoFollowStatus(videoInfoList, userId); err != nil {
+	if err = s.fillVideoFollowStatus(videoInfoList, userID); err != nil {
 		return nil, offset, false, err
 	}
 	return videoInfoList, offset + consumed, hasMore, nil
 }
 
-func (s *FeedService) GetFollowFeedVideos(limit uint64, lastScore float64, userId uint64) ([]res.VideoInfoRes, float64, error) {
-	followingIDs, err := s.getFollowingUserIDs(userId)
+func (s *FeedService) GetFollowFeedVideos(limit uint64, lastScore float64, userID uint64) ([]res.VideoInfoRes, float64, error) {
+	followingIDs, err := s.getFollowingUserIDs(userID)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -140,10 +140,10 @@ func (s *FeedService) GetFollowFeedVideos(limit uint64, lastScore float64, userI
 		}
 	}
 	s.fillVideoAuthorAvatar(videoInfoList)
-	if err = s.fillVideoLikeStatus(videoInfoList, userId); err != nil {
+	if err = s.fillVideoLikeStatus(videoInfoList, userID); err != nil {
 		return nil, 0, err
 	}
-	if err = s.fillVideoFollowStatus(videoInfoList, userId); err != nil {
+	if err = s.fillVideoFollowStatus(videoInfoList, userID); err != nil {
 		return nil, 0, err
 	}
 	nextScore := float64(videoInfoList[len(videoInfoList)-1].CreatedAt.UnixMicro())
@@ -151,12 +151,7 @@ func (s *FeedService) GetFollowFeedVideos(limit uint64, lastScore float64, userI
 }
 
 func (s *FeedService) GetFeedVideoIds(limit uint64, lastScore float64, key string) ([]uint64, error) {
-	member := &redis.ZRangeBy{
-		Min:    "-inf",
-		Max:    "+inf",
-		Offset: 0,
-		Count:  int64(limit),
-	}
+	member := &redis.ZRangeBy{Min: "-inf", Max: "+inf", Offset: 0, Count: int64(limit)}
 	if lastScore > 0 {
 		member.Max = "(" + strconv.FormatFloat(lastScore, 'f', -1, 64)
 	}
@@ -187,10 +182,7 @@ func (s *FeedService) GetHotVideoIDsByWindow(limit uint64, offset uint64, interv
 	if ok, err := s.redisClient.Exists(ctx, mergeKey).Result(); err != nil {
 		return nil, 0, false, err
 	} else if ok == 0 {
-		if err = s.redisClient.ZUnionStore(ctx, mergeKey, &redis.ZStore{
-			Keys:      keys,
-			Aggregate: "SUM",
-		}).Err(); err != nil {
+		if err = s.redisClient.ZUnionStore(ctx, mergeKey, &redis.ZStore{Keys: keys, Aggregate: "SUM"}).Err(); err != nil {
 			return nil, 0, false, err
 		}
 		if err = s.redisClient.Expire(ctx, mergeKey, 2*time.Minute).Err(); err != nil {
@@ -251,10 +243,7 @@ func (s *FeedService) EnsureHotVideoMember(videoID uint64, minute time.Time) err
 	key := s.getHotMinuteKey(minute.UTC().Truncate(time.Minute))
 	ctx := context.Background()
 	pipe := s.redisClient.TxPipeline()
-	pipe.ZAdd(ctx, key, redis.Z{
-		Score:  0,
-		Member: strconv.FormatUint(videoID, 10),
-	})
+	pipe.ZAdd(ctx, key, redis.Z{Score: 0, Member: strconv.FormatUint(videoID, 10)})
 	pipe.Expire(ctx, key, 70*time.Minute)
 	_, err := pipe.Exec(ctx)
 	return err
@@ -292,11 +281,14 @@ func (s *FeedService) PublishVideoHotEvent(videoID uint64, delta float64) error 
 	if err != nil {
 		return err
 	}
-	msg := amqp.Publishing{
-		ContentType: "application/json",
-		Body:        data,
-	}
+	msg := amqp.Publishing{ContentType: "application/json", Body: data}
 	return s.hotMQ.Publish(event.VideoHotExchange, event.VideoHotRoutingKey, false, false, msg)
+}
+
+func (s *FeedService) MustInvalidateVideoInfoCache(videoID uint64) {
+	if err := s.InvalidateVideoInfoCache(videoID); err != nil {
+		log.Println(err)
+	}
 }
 
 func (s *FeedService) fillVideoAuthorAvatar(videoInfoList []res.VideoInfoRes) {
@@ -315,10 +307,7 @@ func (s *FeedService) fillVideoAuthorAvatar(videoInfoList []res.VideoInfoRes) {
 		if err != nil || user == nil {
 			continue
 		}
-		profile := res.UserInfoRes{
-			Nickname:  user.NickName,
-			AvatarURL: util.EnsureHTTPPath(user.AvatarURL),
-		}
+		profile := res.UserInfoRes{Nickname: user.NickName, AvatarURL: util.EnsureHTTPPath(user.AvatarURL)}
 		cache[authorID] = profile
 		if profile.Nickname != "" {
 			videoInfoList[i].AuthorName = profile.Nickname
@@ -327,10 +316,10 @@ func (s *FeedService) fillVideoAuthorAvatar(videoInfoList []res.VideoInfoRes) {
 	}
 }
 
-func (s *FeedService) fillVideoLikeStatus(videoInfoList []res.VideoInfoRes, userId uint64) error {
+func (s *FeedService) fillVideoLikeStatus(videoInfoList []res.VideoInfoRes, userID uint64) error {
 	for i := range videoInfoList {
 		likeKey := fmt.Sprintf(constants.LikeVideo, videoInfoList[i].Id)
-		isLiked, err := s.redisClient.SIsMember(context.Background(), likeKey, userId).Result()
+		isLiked, err := s.redisClient.SIsMember(context.Background(), likeKey, userID).Result()
 		if err != nil {
 			return err
 		}
@@ -339,10 +328,10 @@ func (s *FeedService) fillVideoLikeStatus(videoInfoList []res.VideoInfoRes, user
 	return nil
 }
 
-func (s *FeedService) fillVideoFollowStatus(videoInfoList []res.VideoInfoRes, userId uint64) error {
-	followKey := fmt.Sprintf(constants.FollowKey, userId)
+func (s *FeedService) fillVideoFollowStatus(videoInfoList []res.VideoInfoRes, userID uint64) error {
+	followKey := fmt.Sprintf(constants.FollowKey, userID)
 	for i := range videoInfoList {
-		if videoInfoList[i].AuthorID == 0 || videoInfoList[i].AuthorID == userId {
+		if videoInfoList[i].AuthorID == 0 || videoInfoList[i].AuthorID == userID {
 			videoInfoList[i].IsFollow = false
 			continue
 		}
@@ -355,8 +344,8 @@ func (s *FeedService) fillVideoFollowStatus(videoInfoList []res.VideoInfoRes, us
 	return nil
 }
 
-func (s *FeedService) getFollowingUserIDs(userId uint64) ([]uint64, error) {
-	key := fmt.Sprintf(constants.FollowKey, userId)
+func (s *FeedService) getFollowingUserIDs(userID uint64) ([]uint64, error) {
+	key := fmt.Sprintf(constants.FollowKey, userID)
 	members, err := s.redisClient.SMembers(context.Background(), key).Result()
 	if err != nil {
 		return nil, err
@@ -417,10 +406,4 @@ func (s *FeedService) getVideoInfoByIDs(ids []uint64) ([]res.VideoInfoRes, error
 		}
 	}
 	return videoInfoList, nil
-}
-
-func (s *FeedService) MustInvalidateVideoInfoCache(videoID uint64) {
-	if err := s.InvalidateVideoInfoCache(videoID); err != nil {
-		log.Println(err)
-	}
 }

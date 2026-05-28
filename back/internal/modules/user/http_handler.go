@@ -7,17 +7,16 @@ import (
 	"simple_tiktok/internal/dto/req"
 	"simple_tiktok/internal/middleware"
 	"simple_tiktok/internal/pkg/response"
-	"simple_tiktok/internal/service"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
 type HTTPHandler struct {
-	service *service.UserService
+	service *Service
 }
 
-func NewHTTPHandler(userService *service.UserService) *HTTPHandler {
+func NewHTTPHandler(userService *Service) *HTTPHandler {
 	return &HTTPHandler{
 		service: userService,
 	}

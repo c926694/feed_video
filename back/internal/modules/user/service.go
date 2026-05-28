@@ -1,4 +1,4 @@
-package service
+package user
 
 import (
 	"context"
@@ -15,7 +15,7 @@ import (
 	"simple_tiktok/internal/pkg/jwt"
 	"simple_tiktok/internal/pkg/upload"
 	"simple_tiktok/internal/pkg/util"
-	"simple_tiktok/internal/repository/mysql"
+	mysqlrepo "simple_tiktok/internal/repository/mysql"
 	"strings"
 	"time"
 
@@ -23,34 +23,34 @@ import (
 	"gorm.io/gorm"
 )
 
-type UserService struct {
-	userRepo  *mysql.UserRepo
-	videoRepo *mysql.VideoRepo
+type Service struct {
+	userRepo  *mysqlrepo.UserRepo
+	videoRepo *mysqlrepo.VideoRepo
 	userRedis *redis.Client
 }
 
-func NewUserService(repo *mysql.UserRepo, videoRepo *mysql.VideoRepo, redis *redis.Client) *UserService {
-	return &UserService{
-		userRepo:  repo,
+func NewService(userRepo *mysqlrepo.UserRepo, videoRepo *mysqlrepo.VideoRepo, redisClient *redis.Client) *Service {
+	return &Service{
+		userRepo:  userRepo,
 		videoRepo: videoRepo,
-		userRedis: redis,
+		userRedis: redisClient,
 	}
 }
 
-func (s *UserService) Register(ctx context.Context, req req.RegisterReq) (uint64, error) {
-	if req.Password != req.RePassword {
+func (s *Service) Register(ctx context.Context, registerReq req.RegisterReq) (uint64, error) {
+	if registerReq.Password != registerReq.RePassword {
 		return 0, errors.New("两次密码不一致")
 	}
-	err := checkValidUsernameAndPassword(req.Username, req.Password)
+	err := checkValidUsernameAndPassword(registerReq.Username, registerReq.Password)
 	if err != nil {
 		return 0, err
 	}
-	hashPassword, err := hash_password.HashPassword(req.Password)
+	hashPassword, err := hash_password.HashPassword(registerReq.Password)
 	if err != nil {
 		return 0, err
 	}
 
-	user, err := s.userRepo.CreateUser(req.Username, hashPassword, constants.DefaultAvatar)
+	user, err := s.userRepo.CreateUser(registerReq.Username, hashPassword, constants.DefaultAvatar)
 	if err != nil {
 		if errors.Is(err, gorm.ErrDuplicatedKey) {
 			return 0, errors.New("当前用户已注册")
@@ -60,13 +60,12 @@ func (s *UserService) Register(ctx context.Context, req req.RegisterReq) (uint64
 	return user.ID, nil
 }
 
-func (s *UserService) Login(username string, password string) (string, error) {
+func (s *Service) Login(username string, password string) (string, error) {
 	err := checkValidUsernameAndPassword(username, password)
 	log.Printf("username = %s ,pasword = %s", username, password)
 	if err != nil {
 		return "", errors.New("无效的用户名密码")
 	}
-	//判断数据库是否有用户
 	user, err := s.userRepo.GetUserByUserNameAndPassword(username)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -74,17 +73,14 @@ func (s *UserService) Login(username string, password string) (string, error) {
 		}
 		return "", err
 	}
-	//检验密码
 	right := hash_password.CheckPassword(password, user.Password)
 	if !right {
 		return "", errors.New("用户名或密码错误")
 	}
-	//生成token
 	token, err := jwt.GenerateToken(user.ID, user.NickName)
 	if err != nil {
 		return "", err
 	}
-	//存到redis
 	key := fmt.Sprintf(middleware.TokenKey, user.ID)
 	expire := initialize.AppConfig.JWT.ExpireHours
 	ctx := context.Background()
@@ -95,12 +91,12 @@ func (s *UserService) Login(username string, password string) (string, error) {
 	return token, nil
 }
 
-func (s *UserService) GetUserInfo(userId uint64) (*res.UserInfoRes, error) {
-	user, err := s.userRepo.GetUserByID(userId)
+func (s *Service) GetUserInfo(userID uint64) (*res.UserInfoRes, error) {
+	user, err := s.userRepo.GetUserByID(userID)
 	if err != nil {
 		return nil, err
 	}
-	videoCount, err := s.videoRepo.CountByAuthorID(userId)
+	videoCount, err := s.videoRepo.CountByAuthorID(userID)
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +111,7 @@ func (s *UserService) GetUserInfo(userId uint64) (*res.UserInfoRes, error) {
 	}, nil
 }
 
-func (s *UserService) UpdateProfile(userID uint64, nickname string, avatar *multipart.FileHeader) (*res.UserInfoRes, error) {
+func (s *Service) UpdateProfile(userID uint64, nickname string, avatar *multipart.FileHeader) (*res.UserInfoRes, error) {
 	user, err := s.userRepo.GetUserByID(userID)
 	if err != nil {
 		return nil, err
@@ -156,8 +152,8 @@ func (s *UserService) UpdateProfile(userID uint64, nickname string, avatar *mult
 	return s.GetUserInfo(userID)
 }
 
-func (s *UserService) Logout(userId uint64) error {
-	_, err := s.userRedis.Del(context.Background(), fmt.Sprintf(middleware.TokenKey, userId)).Result()
+func (s *Service) Logout(userID uint64) error {
+	_, err := s.userRedis.Del(context.Background(), fmt.Sprintf(middleware.TokenKey, userID)).Result()
 	if err != nil {
 		return err
 	}

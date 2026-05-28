@@ -29,7 +29,7 @@ func NewModule(ctx modulekit.Context) (*Module, error) {
 	if err != nil {
 		return nil, err
 	}
-	videoService := service.NewVideoService(videoRepo, userRepo, ctx.Redis, videoMQ, commentRepo, feedService)
+	videoService := NewService(videoRepo, userRepo, ctx.Redis, videoMQ, commentRepo, feedService)
 	videoHandler := NewHTTPHandler(videoService)
 
 	consumerChannel, err := ctx.RabbitConn.Channel()
