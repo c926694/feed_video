@@ -30,6 +30,7 @@ back/bin/
 back/tmp/
 back/.gocache/
 back/.gocache_local/
+back/.gomodcache_local/
 coverage.out
 *.test
 

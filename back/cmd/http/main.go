@@ -5,8 +5,9 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"simple_tiktok/internal/app"
 	initialize2 "simple_tiktok/internal/initialize"
-	"simple_tiktok/internal/router"
+	"simple_tiktok/internal/modulekit"
 
 	"github.com/gin-gonic/gin"
 )
@@ -39,7 +40,11 @@ func main() {
 	}
 
 	gin.SetMode(cfg.Server.Mode)
-	r, err := router.InitRouter(initialize2.DB, initialize2.RedisClient, initialize2.RabbitConn)
+	r, err := app.BuildHTTPFromContext(modulekit.Context{
+		DB:         initialize2.DB,
+		Redis:      initialize2.RedisClient,
+		RabbitConn: initialize2.RabbitConn,
+	})
 	if err != nil {
 		log.Fatalf("init router failed: %v", err)
 	}
