@@ -23,6 +23,7 @@ import (
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/redis/go-redis/v9"
+	"gorm.io/gorm"
 )
 
 type VideoService struct {
@@ -32,6 +33,28 @@ type VideoService struct {
 	videoMQ     *amqp.Channel
 	commentRepo *mysql2.CommentRepo
 }
+
+type videoInfoCacheEnvelope struct {
+	Data     *res.VideoInfoRes `json:"data,omitempty"`
+	Empty    bool              `json:"empty"`
+	ExpireAt int64             `json:"expire_at"`
+}
+
+const (
+	videoInfoLogicalTTL     = 5 * time.Minute
+	videoInfoNullLogicalTTL = 2 * time.Minute
+	videoInfoPhysicalTTL    = 24 * time.Hour
+	videoInfoRebuildLockTTL = 10 * time.Second
+	videoInfoMissRetryTimes = 8
+	videoInfoMissRetrySleep = 30 * time.Millisecond
+)
+
+var unlockVideoInfoLockScript = redis.NewScript(`
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+    return redis.call("DEL", KEYS[1])
+end
+return 0
+`)
 
 func NewVideoService(videoRepo *mysql2.VideoRepo, userRepo *mysql2.UserRepo, redisClient *redis.Client,
 	videoMQ *amqp.Channel, commentRepo *mysql2.CommentRepo) *VideoService {
@@ -509,7 +532,144 @@ func (s *VideoService) reorderExistingVideoInfos(videoInfoList []res.VideoInfoRe
 }
 
 func (s *VideoService) GetVideoInfo(id uint64, userId uint64) (res.VideoInfoRes, error) {
-	video, err := s.videoRepo.GetVideoById(id)
+	videoInfo, exists, err := s.getVideoInfoBaseWithCache(id)
+	if err != nil {
+		return res.VideoInfoRes{}, err
+	}
+	if !exists {
+		return res.VideoInfoRes{}, gorm.ErrRecordNotFound
+	}
+	videoInfoList := []res.VideoInfoRes{videoInfo}
+	if err = s.fillVideoLikeStatus(videoInfoList, userId); err != nil {
+		return res.VideoInfoRes{}, err
+	}
+	if err = s.fillVideoFollowStatus(videoInfoList, userId); err != nil {
+		return res.VideoInfoRes{}, err
+	}
+	return videoInfoList[0], nil
+}
+
+func (s *VideoService) getVideoInfoBaseWithCache(videoID uint64) (res.VideoInfoRes, bool, error) {
+	ctx := context.Background()
+	cacheKey := fmt.Sprintf(constants.VideoInfoCacheKey, videoID)
+	raw, err := s.redisClient.Get(ctx, cacheKey).Result()
+	if err == nil {
+		envelope, parseErr := s.parseVideoInfoCacheEnvelope(raw)
+		if parseErr == nil {
+			now := time.Now().Unix()
+			if envelope.Empty {
+				if envelope.ExpireAt <= now {
+					s.tryRefreshVideoInfoCacheAsync(videoID)
+				}
+				return res.VideoInfoRes{}, false, nil
+			}
+			if envelope.Data != nil {
+				if envelope.ExpireAt <= now {
+					s.tryRefreshVideoInfoCacheAsync(videoID)
+				}
+				return *envelope.Data, true, nil
+			}
+		}
+		_ = s.redisClient.Del(ctx, cacheKey).Err()
+	} else if err != redis.Nil {
+		return res.VideoInfoRes{}, false, err
+	}
+
+	return s.rebuildVideoInfoCacheOnMiss(videoID)
+}
+
+func (s *VideoService) rebuildVideoInfoCacheOnMiss(videoID uint64) (res.VideoInfoRes, bool, error) {
+	ctx := context.Background()
+	cacheKey := fmt.Sprintf(constants.VideoInfoCacheKey, videoID)
+	lockKey := fmt.Sprintf(constants.VideoInfoLockKey, videoID)
+	for i := 0; i < videoInfoMissRetryTimes; i++ {
+		lockValue := strconv.FormatInt(time.Now().UnixNano(), 10)
+		locked, err := s.redisClient.SetNX(ctx, lockKey, lockValue, videoInfoRebuildLockTTL).Result()
+		if err != nil {
+			return res.VideoInfoRes{}, false, err
+		}
+		if locked {
+			defer s.releaseVideoInfoLock(lockKey, lockValue)
+
+			if raw, getErr := s.redisClient.Get(ctx, cacheKey).Result(); getErr == nil {
+				envelope, parseErr := s.parseVideoInfoCacheEnvelope(raw)
+				if parseErr == nil {
+					if envelope.Empty {
+						return res.VideoInfoRes{}, false, nil
+					}
+					if envelope.Data != nil {
+						return *envelope.Data, true, nil
+					}
+				}
+			}
+
+			videoInfo, exists, loadErr := s.loadVideoInfoFromDBAndWriteCache(videoID)
+			return videoInfo, exists, loadErr
+		}
+
+		time.Sleep(videoInfoMissRetrySleep)
+		raw, getErr := s.redisClient.Get(ctx, cacheKey).Result()
+		if getErr != nil {
+			if getErr == redis.Nil {
+				continue
+			}
+			return res.VideoInfoRes{}, false, getErr
+		}
+		envelope, parseErr := s.parseVideoInfoCacheEnvelope(raw)
+		if parseErr != nil {
+			continue
+		}
+		if envelope.Empty {
+			return res.VideoInfoRes{}, false, nil
+		}
+		if envelope.Data != nil {
+			return *envelope.Data, true, nil
+		}
+	}
+	return s.loadVideoInfoFromDBAndWriteCache(videoID)
+}
+
+func (s *VideoService) tryRefreshVideoInfoCacheAsync(videoID uint64) {
+	ctx := context.Background()
+	lockKey := fmt.Sprintf(constants.VideoInfoLockKey, videoID)
+	lockValue := strconv.FormatInt(time.Now().UnixNano(), 10)
+	locked, err := s.redisClient.SetNX(ctx, lockKey, lockValue, videoInfoRebuildLockTTL).Result()
+	if err != nil || !locked {
+		return
+	}
+	go func() {
+		defer s.releaseVideoInfoLock(lockKey, lockValue)
+		_, _, _ = s.loadVideoInfoFromDBAndWriteCache(videoID)
+	}()
+}
+
+func (s *VideoService) loadVideoInfoFromDBAndWriteCache(videoID uint64) (res.VideoInfoRes, bool, error) {
+	videoInfo, err := s.loadVideoInfoBaseFromDB(videoID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			setErr := s.setVideoInfoCacheEnvelope(videoID, videoInfoCacheEnvelope{
+				Empty:    true,
+				ExpireAt: time.Now().Add(videoInfoNullLogicalTTL).Unix(),
+			})
+			if setErr != nil {
+				return res.VideoInfoRes{}, false, setErr
+			}
+			return res.VideoInfoRes{}, false, nil
+		}
+		return res.VideoInfoRes{}, false, err
+	}
+	setErr := s.setVideoInfoCacheEnvelope(videoID, videoInfoCacheEnvelope{
+		Data:     &videoInfo,
+		ExpireAt: time.Now().Add(videoInfoLogicalTTL).Unix(),
+	})
+	if setErr != nil {
+		return res.VideoInfoRes{}, false, setErr
+	}
+	return videoInfo, true, nil
+}
+
+func (s *VideoService) loadVideoInfoBaseFromDB(videoID uint64) (res.VideoInfoRes, error) {
+	video, err := s.videoRepo.GetVideoById(videoID)
 	if err != nil {
 		return res.VideoInfoRes{}, err
 	}
@@ -527,13 +687,33 @@ func (s *VideoService) GetVideoInfo(id uint64, userId uint64) (res.VideoInfoRes,
 	}
 	videoInfoList := []res.VideoInfoRes{videoInfo}
 	s.fillVideoAuthorAvatar(videoInfoList)
-	if err = s.fillVideoLikeStatus(videoInfoList, userId); err != nil {
-		return res.VideoInfoRes{}, err
-	}
-	if err = s.fillVideoFollowStatus(videoInfoList, userId); err != nil {
-		return res.VideoInfoRes{}, err
-	}
 	return videoInfoList[0], nil
+}
+
+func (s *VideoService) setVideoInfoCacheEnvelope(videoID uint64, envelope videoInfoCacheEnvelope) error {
+	data, err := json.Marshal(envelope)
+	if err != nil {
+		return err
+	}
+	cacheKey := fmt.Sprintf(constants.VideoInfoCacheKey, videoID)
+	return s.redisClient.Set(context.Background(), cacheKey, data, videoInfoPhysicalTTL).Err()
+}
+
+func (s *VideoService) parseVideoInfoCacheEnvelope(raw string) (videoInfoCacheEnvelope, error) {
+	var envelope videoInfoCacheEnvelope
+	if err := json.Unmarshal([]byte(raw), &envelope); err != nil {
+		return videoInfoCacheEnvelope{}, err
+	}
+	return envelope, nil
+}
+
+func (s *VideoService) releaseVideoInfoLock(lockKey string, lockValue string) {
+	_ = unlockVideoInfoLockScript.Run(context.Background(), s.redisClient, []string{lockKey}, lockValue).Err()
+}
+
+func (s *VideoService) invalidateVideoInfoCache(videoID uint64) {
+	cacheKey := fmt.Sprintf(constants.VideoInfoCacheKey, videoID)
+	_ = s.redisClient.Del(context.Background(), cacheKey).Err()
 }
 
 func (s *VideoService) getVideoInfoByIds(ids []uint64) ([]res.VideoInfoRes, error) {
@@ -596,6 +776,7 @@ func (s *VideoService) DeleteVideo(id uint64, userId uint64) error {
 	if err := s.RemoveVideoFromHotMinuteBuckets(id, 1440); err != nil {
 		return err
 	}
+	s.invalidateVideoInfoCache(id)
 
 	likeKey := fmt.Sprintf(constants.LikeVideo, id)
 	if err := s.redisClient.Del(context.Background(), likeKey).Err(); err != nil {

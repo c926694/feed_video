@@ -1,27 +1,33 @@
 package consumer
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"simple_tiktok/internal/mq/event"
+	"simple_tiktok/internal/pkg/constants"
 	mysql2 "simple_tiktok/internal/repository/mysql"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
+	"github.com/redis/go-redis/v9"
 )
 
 type LikeConsumer struct {
 	channel     *amqp.Channel
 	videoRepo   *mysql2.VideoRepo
 	commentRepo *mysql2.CommentRepo
+	redisClient *redis.Client
 }
 
-func NewLikeConsumer(channel *amqp.Channel, videoRepo *mysql2.VideoRepo, commentRepo *mysql2.CommentRepo) *LikeConsumer {
+func NewLikeConsumer(channel *amqp.Channel, videoRepo *mysql2.VideoRepo, commentRepo *mysql2.CommentRepo, redisClient *redis.Client) *LikeConsumer {
 	return &LikeConsumer{
 		channel:     channel,
 		videoRepo:   videoRepo,
 		commentRepo: commentRepo,
+		redisClient: redisClient,
 	}
 }
 
@@ -94,6 +100,7 @@ func (c *LikeConsumer) LikeVideoHandler(msg amqp.Delivery) {
 		_ = msg.Nack(false, false)
 		return
 	}
+	c.invalidateVideoInfoCache(videoId)
 
 	if err := c.publishVideoHotEvent(videoId, hotDelta); err != nil {
 		log.Println(err)
@@ -162,4 +169,14 @@ func (c *LikeConsumer) getVideoHotEventMsg(videoId uint64, delta float64) (amqp.
 		ContentType: "application/json",
 		Body:        data,
 	}, nil
+}
+
+func (c *LikeConsumer) invalidateVideoInfoCache(videoID uint64) {
+	if c.redisClient == nil {
+		return
+	}
+	cacheKey := fmt.Sprintf(constants.VideoInfoCacheKey, videoID)
+	if err := c.redisClient.Del(context.Background(), cacheKey).Err(); err != nil {
+		log.Println(err)
+	}
 }

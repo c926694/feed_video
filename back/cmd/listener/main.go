@@ -29,7 +29,7 @@ func main() {
 	userRepo := mysql2.NewUserRepo(initialize2.DB)
 	videoRedis := initialize2.RedisClient
 	videoService := service.NewVideoService(videoRepo, userRepo, videoRedis, initialize2.RabbitChannel, commentRepo)
-	likeConsumer := consumer2.NewLikeConsumer(initialize2.RabbitChannel, videoRepo, commentRepo)
+	likeConsumer := consumer2.NewLikeConsumer(initialize2.RabbitChannel, videoRepo, commentRepo, initialize2.RedisClient)
 	videoHotConsumer := consumer2.NewVideoHotConsumer(initialize2.RabbitChannel, videoRepo, videoService)
 	followConsumer := consumer2.NewFollowConsumer(initialize2.RabbitChannel, followRepo, userRepo)
 	err = likeConsumer.Declare(event.LikeVideoExchange, event.LikeVideoExchangeType,

@@ -70,6 +70,7 @@ func (s *CommentService) CreateComment(id uint64, req req.CommentReq) (res.Comme
 	if err = tx.Commit().Error; err != nil {
 		return res.CommentRes{}, err
 	}
+	s.invalidateVideoInfoCache(comment.VideoID)
 	s.publishVideoHotEvent(comment.VideoID, 1)
 	commentRes := res.CommentRes{
 		Id:        comment.ID,
@@ -110,6 +111,7 @@ func (s *CommentService) DeleteComment(userId uint64, id uint64) error {
 	if err = tx.Commit().Error; err != nil {
 		return err
 	}
+	s.invalidateVideoInfoCache(comment.VideoID)
 	s.publishVideoHotEvent(comment.VideoID, -1)
 	return nil
 }
@@ -184,4 +186,9 @@ func (s *CommentService) publishVideoHotEvent(videoId uint64, delta float64) {
 	if err := s.hotMQ.Publish(event.VideoHotExchange, event.VideoHotRoutingKey, false, false, msg); err != nil {
 		log.Println(err)
 	}
+}
+
+func (s *CommentService) invalidateVideoInfoCache(videoID uint64) {
+	cacheKey := fmt.Sprintf(constants.VideoInfoCacheKey, videoID)
+	_ = s.redisClient.Del(context.Background(), cacheKey).Err()
 }

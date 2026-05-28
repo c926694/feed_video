@@ -11,6 +11,8 @@ const (
 	HotFeedVideoKey          = "feed:hot:video"
 	HotFeedVideoMinutePrefix = "feed:hot:video:1m"
 	HotFeedVideoMergePrefix  = "feed:hot:video:merge"
+	VideoInfoCacheKey        = "cache:video:info:%d"
+	VideoInfoLockKey         = "lock:video:info:%d"
 	LikeVideo                = "like:video:%d"
 	LikeComment              = "like:comment:%d"
 	FollowKey                = "follow:%d"
