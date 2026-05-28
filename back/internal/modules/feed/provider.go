@@ -2,16 +2,17 @@ package feed
 
 import (
 	"simple_tiktok/internal/modulekit"
-	"simple_tiktok/internal/mq/event"
 	consumer2 "simple_tiktok/internal/mq/consumer"
 	mysqlrepo "simple_tiktok/internal/repository/mysql"
 	"simple_tiktok/internal/service"
 
-	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 )
 
 type Module struct {
 	videoHotConsumer *consumer2.VideoHotConsumer
+	feedHandler      *HTTPHandler
+	redis            *redis.Client
 }
 
 func NewModule(ctx modulekit.Context) (*Module, error) {
@@ -31,20 +32,7 @@ func NewModule(ctx modulekit.Context) (*Module, error) {
 	videoHotConsumer := consumer2.NewVideoHotConsumer(consumerChannel, videoRepo, videoService)
 	return &Module{
 		videoHotConsumer: videoHotConsumer,
+		feedHandler:      NewHTTPHandler(videoService),
+		redis:            ctx.Redis,
 	}, nil
-}
-
-func (m *Module) RegisterHTTP(r *gin.Engine) error {
-	return nil
-}
-
-func (m *Module) RegisterConsumers(registrar modulekit.ConsumerRegistrar) error {
-	if err := m.videoHotConsumer.Declare(event.VideoHotExchange, event.VideoHotExchangeType,
-		event.VideoHotQueue, event.VideoHotRoutingKey); err != nil {
-		return err
-	}
-	registrar.Add("feed.hot", func() error {
-		return m.videoHotConsumer.Listen(event.VideoHotQueue, m.videoHotConsumer.HotUpdateHandler)
-	})
-	return nil
 }
