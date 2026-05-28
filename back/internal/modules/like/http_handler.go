@@ -1,4 +1,4 @@
-package controller
+package like
 
 import (
 	"net/http"
@@ -11,30 +11,28 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-type LikeController struct {
+type HTTPHandler struct {
 	service *service.LikeService
 }
 
-func NewLikeController(likeService *service.LikeService) *LikeController {
-	return &LikeController{service: likeService}
+func NewHTTPHandler(likeService *service.LikeService) *HTTPHandler {
+	return &HTTPHandler{
+		service: likeService,
+	}
 }
 
-func (ctl *LikeController) Action(c *gin.Context) {
-	response.Fail(c, http.StatusNotImplemented, "not implemented")
-}
-
-func (ctl *LikeController) LikeVideo(c *gin.Context) {
-	targetId, err := strconv.ParseUint(c.Param("id"), 10, 64)
+func (h *HTTPHandler) LikeVideo(c *gin.Context) {
+	targetID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
 		response.Fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	userId, err := type_convert.AnyToUint64(c.MustGet(middleware.UserCtx))
+	userID, err := type_convert.AnyToUint64(c.MustGet(middleware.UserCtx))
 	if err != nil {
 		response.Fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	result, err := ctl.service.LikeVideo(targetId, userId)
+	result, err := h.service.LikeVideo(targetID, userID)
 	if err != nil {
 		response.Fail(c, http.StatusInternalServerError, err.Error())
 		return
@@ -42,18 +40,18 @@ func (ctl *LikeController) LikeVideo(c *gin.Context) {
 	response.OK(c, result)
 }
 
-func (ctl *LikeController) LikeComment(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+func (h *HTTPHandler) LikeComment(c *gin.Context) {
+	commentID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
 		response.Fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	userId, err := type_convert.AnyToUint64(c.MustGet(middleware.UserCtx))
+	userID, err := type_convert.AnyToUint64(c.MustGet(middleware.UserCtx))
 	if err != nil {
 		response.Fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	result, err := ctl.service.LikeComment(id, userId)
+	result, err := h.service.LikeComment(commentID, userID)
 	if err != nil {
 		response.Fail(c, http.StatusInternalServerError, err.Error())
 		return

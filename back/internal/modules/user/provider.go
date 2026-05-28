@@ -1,7 +1,6 @@
 package user
 
 import (
-	"simple_tiktok/internal/controller"
 	"simple_tiktok/internal/modulekit"
 	mysqlrepo "simple_tiktok/internal/repository/mysql"
 	"simple_tiktok/internal/service"
@@ -10,7 +9,7 @@ import (
 )
 
 type Module struct {
-	controller *controller.UserController
+	httpHandler *HTTPHandler
 	redis      *redis.Client
 }
 
@@ -19,7 +18,7 @@ func NewModule(ctx modulekit.Context) *Module {
 	videoRepo := mysqlrepo.NewVideoRepo(ctx.DB)
 	userService := service.NewUserService(userRepo, videoRepo, ctx.Redis)
 	return &Module{
-		controller: controller.NewUserController(userService),
+		httpHandler: NewHTTPHandler(userService),
 		redis:      ctx.Redis,
 	}
 }

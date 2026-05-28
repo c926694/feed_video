@@ -1,7 +1,6 @@
 package comment
 
 import (
-	"simple_tiktok/internal/controller"
 	"simple_tiktok/internal/modulekit"
 	mysqlrepo "simple_tiktok/internal/repository/mysql"
 	"simple_tiktok/internal/service"
@@ -10,7 +9,7 @@ import (
 )
 
 type Module struct {
-	controller *controller.CommentController
+	httpHandler *HTTPHandler
 	redis      *redis.Client
 }
 
@@ -25,7 +24,7 @@ func NewModule(ctx modulekit.Context) (*Module, error) {
 	feedService := service.NewFeedService(videoRepo, userRepo, ctx.Redis, hotMQ)
 	commentService := service.NewCommentService(commentRepo, videoRepo, userRepo, ctx.Redis, feedService)
 	return &Module{
-		controller: controller.NewCommentController(commentService),
+		httpHandler: NewHTTPHandler(commentService),
 		redis:      ctx.Redis,
 	}, nil
 }

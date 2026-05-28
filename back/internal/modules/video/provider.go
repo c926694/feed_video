@@ -1,7 +1,6 @@
 package video
 
 import (
-	"simple_tiktok/internal/controller"
 	"simple_tiktok/internal/modulekit"
 	consumer2 "simple_tiktok/internal/mq/consumer"
 	mysqlrepo "simple_tiktok/internal/repository/mysql"
@@ -11,7 +10,7 @@ import (
 )
 
 type Module struct {
-	controller    *controller.VideoController
+	httpHandler   *HTTPHandler
 	videoConsumer *consumer2.VideoConsumer
 	redis         *redis.Client
 }
@@ -31,7 +30,7 @@ func NewModule(ctx modulekit.Context) (*Module, error) {
 		return nil, err
 	}
 	videoService := service.NewVideoService(videoRepo, userRepo, ctx.Redis, videoMQ, commentRepo, feedService)
-	videoController := controller.NewVideoController(videoService)
+	videoHandler := NewHTTPHandler(videoService)
 
 	consumerChannel, err := ctx.RabbitConn.Channel()
 	if err != nil {
@@ -40,7 +39,7 @@ func NewModule(ctx modulekit.Context) (*Module, error) {
 	videoConsumer := consumer2.NewVideoConsumer(consumerChannel, videoRepo)
 
 	return &Module{
-		controller:    videoController,
+		httpHandler:   videoHandler,
 		videoConsumer: videoConsumer,
 		redis:         ctx.Redis,
 	}, nil

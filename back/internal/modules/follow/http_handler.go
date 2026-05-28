@@ -1,4 +1,4 @@
-package controller
+package follow
 
 import (
 	"net/http"
@@ -11,15 +11,17 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-type FollowController struct {
+type HTTPHandler struct {
 	service *service.FollowService
 }
 
-func NewFollowController(followService *service.FollowService) *FollowController {
-	return &FollowController{service: followService}
+func NewHTTPHandler(followService *service.FollowService) *HTTPHandler {
+	return &HTTPHandler{
+		service: followService,
+	}
 }
 
-func (ctl *FollowController) Follow(c *gin.Context) {
+func (h *HTTPHandler) Follow(c *gin.Context) {
 	targetUserID, err := strconv.ParseUint(c.Param("follower"), 10, 64)
 	if err != nil {
 		response.Fail(c, http.StatusBadRequest, err.Error())
@@ -30,7 +32,7 @@ func (ctl *FollowController) Follow(c *gin.Context) {
 		response.Fail(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	result, err := ctl.service.Follow(targetUserID, currentUserID)
+	result, err := h.service.Follow(targetUserID, currentUserID)
 	if err != nil {
 		response.Fail(c, http.StatusBadRequest, err.Error())
 		return

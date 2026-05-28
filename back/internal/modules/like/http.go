@@ -9,8 +9,8 @@ import (
 func (m *Module) RegisterHTTP(r *gin.Engine) error {
 	likeGroup := r.Group("likes")
 	{
-		likeGroup.POST("/video/switchLike/:id", middleware.JWTAuth(m.redis), m.controller.LikeVideo)
-		likeGroup.POST("/comment/switchLike/:id", middleware.JWTAuth(m.redis), m.controller.LikeComment)
+		likeGroup.POST("/video/switchLike/:id", middleware.JWTAuth(m.redis), m.httpHandler.LikeVideo)
+		likeGroup.POST("/comment/switchLike/:id", middleware.JWTAuth(m.redis), m.httpHandler.LikeComment)
 	}
 	return nil
 }

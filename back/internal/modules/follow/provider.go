@@ -1,7 +1,6 @@
 package follow
 
 import (
-	"simple_tiktok/internal/controller"
 	"simple_tiktok/internal/modulekit"
 	consumer2 "simple_tiktok/internal/mq/consumer"
 	mysqlrepo "simple_tiktok/internal/repository/mysql"
@@ -11,7 +10,7 @@ import (
 )
 
 type Module struct {
-	controller     *controller.FollowController
+	httpHandler    *HTTPHandler
 	followConsumer *consumer2.FollowConsumer
 	redis          *redis.Client
 }
@@ -32,7 +31,7 @@ func NewModule(ctx modulekit.Context) (*Module, error) {
 	followConsumer := consumer2.NewFollowConsumer(consumerChannel, followRepo, userRepo)
 
 	return &Module{
-		controller:     controller.NewFollowController(followService),
+		httpHandler:    NewHTTPHandler(followService),
 		followConsumer: followConsumer,
 		redis:          ctx.Redis,
 	}, nil

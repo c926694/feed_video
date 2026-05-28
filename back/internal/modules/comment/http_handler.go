@@ -1,4 +1,4 @@
-package controller
+package comment
 
 import (
 	"net/http"
@@ -12,59 +12,69 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-type CommentController struct {
+type HTTPHandler struct {
 	service *service.CommentService
 }
 
-func NewCommentController(commentService *service.CommentService) *CommentController {
-	return &CommentController{service: commentService}
+func NewHTTPHandler(commentService *service.CommentService) *HTTPHandler {
+	return &HTTPHandler{
+		service: commentService,
+	}
 }
 
-func (ctl *CommentController) Create(c *gin.Context) {
+func (h *HTTPHandler) Create(c *gin.Context) {
 	var commentReq req.CommentReq
 	if err := c.ShouldBind(&commentReq); err != nil {
 		response.Fail(c, http.StatusBadRequest, err.Error())
+		return
 	}
-	userId, err := type_convert.AnyToUint64(c.MustGet(middleware.UserCtx))
-	if err != nil {
-		response.Fail(c, http.StatusBadRequest, err.Error())
-	}
-	commentRes, err := ctl.service.CreateComment(userId, commentReq)
-	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, err.Error())
-	}
-	response.OK(c, commentRes)
-}
-
-func (ctl *CommentController) Delete(c *gin.Context) {
-	userId, err := type_convert.AnyToUint64(c.MustGet(middleware.UserCtx))
-	if err != nil {
-		response.Fail(c, http.StatusBadRequest, err.Error())
-	}
-	commentId, err := strconv.ParseUint(c.Param("id"), 10, 64)
-	if err != nil {
-		response.Fail(c, http.StatusBadRequest, err.Error())
-	}
-	err = ctl.service.DeleteComment(userId, commentId)
-	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, err.Error())
-	}
-	response.OK(c, nil)
-}
-
-func (ctl *CommentController) List(c *gin.Context) {
-	videoId, err := strconv.ParseUint(c.Param("videoId"), 10, 64)
-	if err != nil {
-		response.Fail(c, http.StatusBadRequest, err.Error())
-	}
-	userId, err := type_convert.AnyToUint64(c.MustGet(middleware.UserCtx))
+	userID, err := type_convert.AnyToUint64(c.MustGet(middleware.UserCtx))
 	if err != nil {
 		response.Fail(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	commentList, err := ctl.service.ListByVideoId(videoId, userId)
+	commentRes, err := h.service.CreateComment(userID, commentReq)
 	if err != nil {
 		response.Fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	response.OK(c, commentRes)
+}
+
+func (h *HTTPHandler) Delete(c *gin.Context) {
+	userID, err := type_convert.AnyToUint64(c.MustGet(middleware.UserCtx))
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	commentID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	err = h.service.DeleteComment(userID, commentID)
+	if err != nil {
+		response.Fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	response.OK(c, nil)
+}
+
+func (h *HTTPHandler) List(c *gin.Context) {
+	videoID, err := strconv.ParseUint(c.Param("videoId"), 10, 64)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	userID, err := type_convert.AnyToUint64(c.MustGet(middleware.UserCtx))
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	commentList, err := h.service.ListByVideoId(videoID, userID)
+	if err != nil {
+		response.Fail(c, http.StatusInternalServerError, err.Error())
+		return
 	}
 	response.OK(c, commentList)
 }

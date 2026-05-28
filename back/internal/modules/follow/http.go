@@ -9,7 +9,7 @@ import (
 func (m *Module) RegisterHTTP(r *gin.Engine) error {
 	followGroup := r.Group("follows")
 	{
-		followGroup.POST("/switchFollow/:follower", middleware.JWTAuth(m.redis), m.controller.Follow)
+		followGroup.POST("/switchFollow/:follower", middleware.JWTAuth(m.redis), m.httpHandler.Follow)
 	}
 	return nil
 }

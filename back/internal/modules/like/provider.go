@@ -1,7 +1,6 @@
 package like
 
 import (
-	"simple_tiktok/internal/controller"
 	"simple_tiktok/internal/modulekit"
 	consumer2 "simple_tiktok/internal/mq/consumer"
 	mysqlrepo "simple_tiktok/internal/repository/mysql"
@@ -11,7 +10,7 @@ import (
 )
 
 type Module struct {
-	controller   *controller.LikeController
+	httpHandler  *HTTPHandler
 	likeConsumer *consumer2.LikeConsumer
 	redis        *redis.Client
 }
@@ -33,7 +32,7 @@ func NewModule(ctx modulekit.Context) (*Module, error) {
 	likeConsumer := consumer2.NewLikeConsumer(consumerChannel, videoRepo, commentRepo, feedService)
 
 	return &Module{
-		controller:   controller.NewLikeController(likeService),
+		httpHandler:  NewHTTPHandler(likeService),
 		likeConsumer: likeConsumer,
 		redis:        ctx.Redis,
 	}, nil

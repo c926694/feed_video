@@ -1,4 +1,4 @@
-package controller
+package video
 
 import (
 	"net/http"
@@ -12,25 +12,17 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-type VideoController struct {
+type HTTPHandler struct {
 	service *service.VideoService
 }
 
-func NewVideoController(videoService *service.VideoService) *VideoController {
-	return &VideoController{
+func NewHTTPHandler(videoService *service.VideoService) *HTTPHandler {
+	return &HTTPHandler{
 		service: videoService,
 	}
 }
 
-func (ctl *VideoController) Publish(c *gin.Context) {
-	response.Fail(c, http.StatusNotImplemented, "not implemented")
-}
-
-func (ctl *VideoController) Delete(c *gin.Context) {
-	response.Fail(c, http.StatusNotImplemented, "not implemented")
-}
-
-func (ctl *VideoController) CreateVideo(c *gin.Context) {
+func (h *HTTPHandler) CreateVideo(c *gin.Context) {
 	var createVideoReq req.UploadVideoReq
 	play, _ := c.FormFile("play")
 	cover, _ := c.FormFile("cover")
@@ -42,7 +34,7 @@ func (ctl *VideoController) CreateVideo(c *gin.Context) {
 		Play:        play,
 		Cover:       cover,
 	}
-	videoRes, err := ctl.service.CreateVideo(
+	videoRes, err := h.service.CreateVideo(
 		createVideoReq, c.MustGet(middleware.UserCtx).(uint64), c.MustGet(middleware.UserNickName).(string))
 	if err != nil {
 		response.Fail(c, http.StatusInternalServerError, err.Error())
@@ -51,7 +43,7 @@ func (ctl *VideoController) CreateVideo(c *gin.Context) {
 	response.OK(c, videoRes)
 }
 
-func (ctl *VideoController) GetVideoInfo(c *gin.Context) {
+func (h *HTTPHandler) GetVideoInfo(c *gin.Context) {
 	rawID := c.Param("id")
 	if rawID == "me" {
 		limit, err := strconv.ParseUint(c.DefaultQuery("limit", "60"), 10, 64)
@@ -59,12 +51,12 @@ func (ctl *VideoController) GetVideoInfo(c *gin.Context) {
 			response.Fail(c, http.StatusBadRequest, "invalid limit")
 			return
 		}
-		userId, err := type_convert.AnyToUint64(c.MustGet(middleware.UserCtx))
+		userID, err := type_convert.AnyToUint64(c.MustGet(middleware.UserCtx))
 		if err != nil {
 			response.Fail(c, http.StatusUnauthorized, "invalid user")
 			return
 		}
-		videoInfoResList, err := ctl.service.GetMyVideos(userId, limit)
+		videoInfoResList, err := h.service.GetMyVideos(userID, limit)
 		if err != nil {
 			response.Fail(c, http.StatusInternalServerError, err.Error())
 			return
@@ -73,17 +65,17 @@ func (ctl *VideoController) GetVideoInfo(c *gin.Context) {
 		return
 	}
 
-	videoId, err := strconv.ParseUint(rawID, 10, 64)
+	videoID, err := strconv.ParseUint(rawID, 10, 64)
 	if err != nil {
 		response.Fail(c, http.StatusBadRequest, "invalid video id")
 		return
 	}
-	userId, err := type_convert.AnyToUint64(c.MustGet(middleware.UserCtx))
+	userID, err := type_convert.AnyToUint64(c.MustGet(middleware.UserCtx))
 	if err != nil {
 		response.Fail(c, http.StatusUnauthorized, "invalid user")
 		return
 	}
-	videoInfoRes, err := ctl.service.GetVideoInfo(videoId, userId)
+	videoInfoRes, err := h.service.GetVideoInfo(videoID, userID)
 	if err != nil {
 		response.Fail(c, http.StatusInternalServerError, err.Error())
 		return
@@ -91,18 +83,18 @@ func (ctl *VideoController) GetVideoInfo(c *gin.Context) {
 	response.OK(c, videoInfoRes)
 }
 
-func (ctl *VideoController) GetMyVideos(c *gin.Context) {
+func (h *HTTPHandler) GetMyVideos(c *gin.Context) {
 	limit, err := strconv.ParseUint(c.DefaultQuery("limit", "60"), 10, 64)
 	if err != nil {
 		response.Fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	userId, err := type_convert.AnyToUint64(c.MustGet(middleware.UserCtx))
+	userID, err := type_convert.AnyToUint64(c.MustGet(middleware.UserCtx))
 	if err != nil {
 		response.Fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	videoInfoResList, err := ctl.service.GetMyVideos(userId, limit)
+	videoInfoResList, err := h.service.GetMyVideos(userID, limit)
 	if err != nil {
 		response.Fail(c, http.StatusInternalServerError, err.Error())
 		return
@@ -110,17 +102,18 @@ func (ctl *VideoController) GetMyVideos(c *gin.Context) {
 	response.OK(c, videoInfoResList)
 }
 
-func (ctl *VideoController) DeleteVideos(c *gin.Context) {
-	videoId, err := strconv.ParseUint(c.Param("id"), 10, 64)
+func (h *HTTPHandler) DeleteVideos(c *gin.Context) {
+	videoID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
 		response.Fail(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	userId, err := type_convert.AnyToUint64(c.MustGet(middleware.UserCtx))
+	userID, err := type_convert.AnyToUint64(c.MustGet(middleware.UserCtx))
 	if err != nil {
 		response.Fail(c, http.StatusInternalServerError, err.Error())
+		return
 	}
-	err = ctl.service.DeleteVideo(videoId, userId)
+	err = h.service.DeleteVideo(videoID, userID)
 	if err != nil {
 		response.Fail(c, http.StatusInternalServerError, err.Error())
 		return
