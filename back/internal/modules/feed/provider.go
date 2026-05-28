@@ -18,21 +18,16 @@ type Module struct {
 func NewModule(ctx modulekit.Context) (*Module, error) {
 	videoRepo := mysqlrepo.NewVideoRepo(ctx.DB)
 	userRepo := mysqlrepo.NewUserRepo(ctx.DB)
-	commentRepo := mysqlrepo.NewCommentRepo(ctx.DB)
-	serviceChannel, err := ctx.RabbitConn.Channel()
-	if err != nil {
-		return nil, err
-	}
-	videoService := service.NewVideoService(videoRepo, userRepo, ctx.Redis, serviceChannel, commentRepo)
+	feedService := service.NewFeedService(videoRepo, userRepo, ctx.Redis)
 
 	consumerChannel, err := ctx.RabbitConn.Channel()
 	if err != nil {
 		return nil, err
 	}
-	videoHotConsumer := consumer2.NewVideoHotConsumer(consumerChannel, videoRepo, videoService)
+	videoHotConsumer := consumer2.NewVideoHotConsumer(consumerChannel, videoRepo, feedService)
 	return &Module{
 		videoHotConsumer: videoHotConsumer,
-		feedHandler:      NewHTTPHandler(videoService),
+		feedHandler:      NewHTTPHandler(feedService),
 		redis:            ctx.Redis,
 	}, nil
 }

@@ -16,14 +16,14 @@ import (
 type VideoHotConsumer struct {
 	channel      *amqp.Channel
 	videoRepo    *mysql2.VideoRepo
-	videoService *service.VideoService
+	feedService  *service.FeedService
 }
 
-func NewVideoHotConsumer(channel *amqp.Channel, videoRepo *mysql2.VideoRepo, videoService *service.VideoService) *VideoHotConsumer {
+func NewVideoHotConsumer(channel *amqp.Channel, videoRepo *mysql2.VideoRepo, feedService *service.FeedService) *VideoHotConsumer {
 	return &VideoHotConsumer{
 		channel:      channel,
 		videoRepo:    videoRepo,
-		videoService: videoService,
+		feedService:  feedService,
 	}
 }
 
@@ -95,7 +95,7 @@ func (c *VideoHotConsumer) HotUpdateHandler(msg amqp.Delivery) {
 	if e.MinuteStamp > 0 {
 		minute = time.Unix(e.MinuteStamp, 0)
 	}
-	if err := c.videoService.IncrementHotScoreByMinute(video.ID, e.ScoreDelta, minute); err != nil {
+	if err := c.feedService.IncrementHotScoreByMinute(video.ID, e.ScoreDelta, minute); err != nil {
 		log.Println(err)
 		_ = msg.Nack(false, true)
 		return

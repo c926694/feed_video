@@ -20,12 +20,13 @@ func NewModule(ctx modulekit.Context) (*Module, error) {
 	videoRepo := mysqlrepo.NewVideoRepo(ctx.DB)
 	userRepo := mysqlrepo.NewUserRepo(ctx.DB)
 	commentRepo := mysqlrepo.NewCommentRepo(ctx.DB)
+	feedService := service.NewFeedService(videoRepo, userRepo, ctx.Redis)
 
 	videoMQ, err := ctx.RabbitConn.Channel()
 	if err != nil {
 		return nil, err
 	}
-	videoService := service.NewVideoService(videoRepo, userRepo, ctx.Redis, videoMQ, commentRepo)
+	videoService := service.NewVideoService(videoRepo, userRepo, ctx.Redis, videoMQ, commentRepo, feedService)
 	videoController := controller.NewVideoController(videoService)
 
 	consumerChannel, err := ctx.RabbitConn.Channel()

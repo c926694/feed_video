@@ -15,12 +15,12 @@ import (
 )
 
 type HTTPHandler struct {
-	service *service.VideoService
+	service *service.FeedService
 }
 
-func NewHTTPHandler(videoService *service.VideoService) *HTTPHandler {
+func NewHTTPHandler(feedService *service.FeedService) *HTTPHandler {
 	return &HTTPHandler{
-		service: videoService,
+		service: feedService,
 	}
 }
 
