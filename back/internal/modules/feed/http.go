@@ -2,16 +2,26 @@ package feed
 
 import (
 	"simple_tiktok/internal/middleware"
+	"simple_tiktok/internal/svc"
+	"simple_tiktok/internal/service"
 
 	"github.com/gin-gonic/gin"
 )
 
-func (m *Module) RegisterHTTP(r *gin.Engine) (*gin.Engine, error) {
+func RegisterHTTP(r *gin.Engine, ctx *svc.ServiceContext) (*gin.Engine, error) {
+	videoRepo := NewVideoRepo(ctx.DB)
+	userRepo := NewUserRepo(ctx.DB)
+	hotMQ, err := ctx.RabbitConn.Channel()
+	if err != nil {
+		return nil, err
+	}
+	feedService := service.NewFeedService(videoRepo, userRepo, ctx.Redis, hotMQ)
+	httpHandler := NewHTTPHandler(feedService)
 	feedGroup := r.Group("videos")
 	{
-		feedGroup.GET("/feed", middleware.JWTAuth(m.redis), m.feedHandler.GetFeedVideos)
-		feedGroup.GET("/feed/hot", middleware.JWTAuth(m.redis), m.feedHandler.GetFeedHotVideos)
-		feedGroup.GET("/feed/follow", middleware.JWTAuth(m.redis), m.feedHandler.GetFollowFeedVideos)
+		feedGroup.GET("/feed", middleware.JWTAuth(ctx.Redis), httpHandler.GetFeedVideos)
+		feedGroup.GET("/feed/hot", middleware.JWTAuth(ctx.Redis), httpHandler.GetFeedHotVideos)
+		feedGroup.GET("/feed/follow", middleware.JWTAuth(ctx.Redis), httpHandler.GetFollowFeedVideos)
 	}
 	return r, nil
 }

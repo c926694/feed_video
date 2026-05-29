@@ -2,18 +2,23 @@ package user
 
 import (
 	"simple_tiktok/internal/middleware"
+	"simple_tiktok/internal/svc"
 
 	"github.com/gin-gonic/gin"
 )
 
-func (m *Module) RegisterHTTP(r *gin.Engine) (*gin.Engine, error) {
+func RegisterHTTP(r *gin.Engine, ctx *svc.ServiceContext) (*gin.Engine, error) {
+	userRepo := NewUserRepo(ctx.DB)
+	videoRepo := NewVideoRepo(ctx.DB)
+	userService := NewService(userRepo, videoRepo, ctx.Redis)
+	httpHandler := NewHTTPHandler(userService)
 	userGroup := r.Group("users")
 	{
-		userGroup.POST("/login", m.httpHandler.Login)
-		userGroup.POST("/register", m.httpHandler.Register)
-		userGroup.DELETE("/logout", middleware.JWTAuth(m.redis), m.httpHandler.Logout)
-		userGroup.GET("/me", middleware.JWTAuth(m.redis), m.httpHandler.GetUserInfo)
-		userGroup.POST("/me", middleware.JWTAuth(m.redis), m.httpHandler.UpdateProfile)
+		userGroup.POST("/login", httpHandler.Login)
+		userGroup.POST("/register", httpHandler.Register)
+		userGroup.DELETE("/logout", middleware.JWTAuth(ctx.Redis), httpHandler.Logout)
+		userGroup.GET("/me", middleware.JWTAuth(ctx.Redis), httpHandler.GetUserInfo)
+		userGroup.POST("/me", middleware.JWTAuth(ctx.Redis), httpHandler.UpdateProfile)
 	}
 	return r, nil
 }

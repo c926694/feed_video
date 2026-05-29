@@ -5,8 +5,13 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"simple_tiktok/internal/app"
 	initialize2 "simple_tiktok/internal/initialize"
+	"simple_tiktok/internal/modules/comment"
+	"simple_tiktok/internal/modules/feed"
+	"simple_tiktok/internal/modules/follow"
+	"simple_tiktok/internal/modules/like"
+	"simple_tiktok/internal/modules/user"
+	"simple_tiktok/internal/modules/video"
 	"simple_tiktok/internal/svc"
 
 	"github.com/gin-gonic/gin"
@@ -40,13 +45,29 @@ func main() {
 	}
 
 	gin.SetMode(cfg.Server.Mode)
-	r, err := app.BuildHTTPFromContext(&svc.ServiceContext{
+	ctx := &svc.ServiceContext{
 		DB:         initialize2.DB,
 		Redis:      initialize2.RedisClient,
 		RabbitConn: initialize2.RabbitConn,
-	})
-	if err != nil {
-		log.Fatalf("init router failed: %v", err)
+	}
+	r := gin.Default()
+	if _, err := user.RegisterHTTP(r, ctx); err != nil {
+		log.Fatalf("register user routes failed: %v", err)
+	}
+	if _, err := video.RegisterHTTP(r, ctx); err != nil {
+		log.Fatalf("register video routes failed: %v", err)
+	}
+	if _, err := comment.RegisterHTTP(r, ctx); err != nil {
+		log.Fatalf("register comment routes failed: %v", err)
+	}
+	if _, err := like.RegisterHTTP(r, ctx); err != nil {
+		log.Fatalf("register like routes failed: %v", err)
+	}
+	if _, err := follow.RegisterHTTP(r, ctx); err != nil {
+		log.Fatalf("register follow routes failed: %v", err)
+	}
+	if _, err := feed.RegisterHTTP(r, ctx); err != nil {
+		log.Fatalf("register feed routes failed: %v", err)
 	}
 
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
