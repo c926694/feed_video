@@ -6,10 +6,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func (m *Module) RegisterHTTP(r *gin.Engine) error {
+func (m *Module) RegisterHTTP(r *gin.Engine) (*gin.Engine, error) {
 	followGroup := r.Group("follows")
 	{
 		followGroup.POST("/switchFollow/:follower", middleware.JWTAuth(m.redis), m.httpHandler.Follow)
 	}
-	return nil
+	return r, nil
 }

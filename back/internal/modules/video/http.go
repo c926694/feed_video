@@ -6,7 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func (m *Module) RegisterHTTP(r *gin.Engine) error {
+func (m *Module) RegisterHTTP(r *gin.Engine) (*gin.Engine, error) {
 	videoGroup := r.Group("videos")
 	{
 		videoGroup.POST("/create", middleware.JWTAuth(m.redis), m.httpHandler.CreateVideo)
@@ -14,5 +14,5 @@ func (m *Module) RegisterHTTP(r *gin.Engine) error {
 		videoGroup.GET("/me", middleware.JWTAuth(m.redis), m.httpHandler.GetMyVideos)
 		videoGroup.GET("/:id", middleware.JWTAuth(m.redis), m.httpHandler.GetVideoInfo)
 	}
-	return nil
+	return r, nil
 }

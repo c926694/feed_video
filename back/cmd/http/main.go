@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"simple_tiktok/internal/app"
 	initialize2 "simple_tiktok/internal/initialize"
-	"simple_tiktok/internal/modulekit"
+	"simple_tiktok/internal/svc"
 
 	"github.com/gin-gonic/gin"
 )
@@ -40,7 +40,7 @@ func main() {
 	}
 
 	gin.SetMode(cfg.Server.Mode)
-	r, err := app.BuildHTTPFromContext(modulekit.Context{
+	r, err := app.BuildHTTPFromContext(&svc.ServiceContext{
 		DB:         initialize2.DB,
 		Redis:      initialize2.RedisClient,
 		RabbitConn: initialize2.RabbitConn,

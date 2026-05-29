@@ -1,9 +1,9 @@
 package like
 
 import (
-	"simple_tiktok/internal/modulekit"
 	consumer2 "simple_tiktok/internal/mq/consumer"
 	"simple_tiktok/internal/service"
+	"simple_tiktok/internal/svc"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -14,7 +14,7 @@ type Module struct {
 	redis        *redis.Client
 }
 
-func NewModule(ctx modulekit.Context) (*Module, error) {
+func NewModule(ctx *svc.ServiceContext) (*Module, error) {
 	serviceChannel, err := ctx.RabbitConn.Channel()
 	if err != nil {
 		return nil, err

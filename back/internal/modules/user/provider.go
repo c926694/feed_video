@@ -1,7 +1,7 @@
 package user
 
 import (
-	"simple_tiktok/internal/modulekit"
+	"simple_tiktok/internal/svc"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -11,7 +11,7 @@ type Module struct {
 	redis      *redis.Client
 }
 
-func NewModule(ctx modulekit.Context) *Module {
+func NewModule(ctx *svc.ServiceContext) *Module {
 	userRepo := NewUserRepo(ctx.DB)
 	videoRepo := NewVideoRepo(ctx.DB)
 	userService := NewService(userRepo, videoRepo, ctx.Redis)

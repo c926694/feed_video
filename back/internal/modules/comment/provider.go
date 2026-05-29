@@ -1,7 +1,7 @@
 package comment
 
 import (
-	"simple_tiktok/internal/modulekit"
+	"simple_tiktok/internal/svc"
 	"simple_tiktok/internal/service"
 
 	"github.com/redis/go-redis/v9"
@@ -12,7 +12,7 @@ type Module struct {
 	redis      *redis.Client
 }
 
-func NewModule(ctx modulekit.Context) (*Module, error) {
+func NewModule(ctx *svc.ServiceContext) (*Module, error) {
 	commentRepo := NewCommentRepo(ctx.DB)
 	videoRepo := NewVideoRepo(ctx.DB)
 	userRepo := NewUserRepo(ctx.DB)

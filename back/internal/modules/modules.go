@@ -1,16 +1,17 @@
 package modules
 
 import (
-	"simple_tiktok/internal/modulekit"
 	"simple_tiktok/internal/modules/comment"
 	"simple_tiktok/internal/modules/feed"
 	"simple_tiktok/internal/modules/follow"
 	"simple_tiktok/internal/modules/like"
 	"simple_tiktok/internal/modules/user"
 	"simple_tiktok/internal/modules/video"
+	"simple_tiktok/internal/modulekit"
+	"simple_tiktok/internal/svc"
 )
 
-func Build(ctx modulekit.Context) ([]modulekit.Module, error) {
+func Build(ctx *svc.ServiceContext) ([]modulekit.Module, error) {
 	userModule := user.NewModule(ctx)
 
 	videoModule, err := video.NewModule(ctx)

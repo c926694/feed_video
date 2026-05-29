@@ -3,15 +3,16 @@ package app
 import (
 	"simple_tiktok/internal/modulekit"
 	"simple_tiktok/internal/modules"
+	"simple_tiktok/internal/svc"
 
 	"github.com/gin-gonic/gin"
 )
 
-func BuildModules(ctx modulekit.Context) ([]modulekit.Module, error) {
+func BuildModules(ctx *svc.ServiceContext) ([]modulekit.Module, error) {
 	return modules.Build(ctx)
 }
 
-func BuildHTTPFromContext(ctx modulekit.Context) (*gin.Engine, error) {
+func BuildHTTPFromContext(ctx *svc.ServiceContext) (*gin.Engine, error) {
 	moduleList, err := BuildModules(ctx)
 	if err != nil {
 		return nil, err
@@ -19,7 +20,7 @@ func BuildHTTPFromContext(ctx modulekit.Context) (*gin.Engine, error) {
 	return BuildHTTPServer(moduleList)
 }
 
-func BuildConsumersFromContext(ctx modulekit.Context) (*ConsumerRunner, error) {
+func BuildConsumersFromContext(ctx *svc.ServiceContext) (*ConsumerRunner, error) {
 	moduleList, err := BuildModules(ctx)
 	if err != nil {
 		return nil, err
