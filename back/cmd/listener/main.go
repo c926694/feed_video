@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log"
 	"simple_tiktok/internal/app"
 	initialize2 "simple_tiktok/internal/initialize"
 	"simple_tiktok/internal/modules/feed"
@@ -8,7 +9,6 @@ import (
 	"simple_tiktok/internal/modules/like"
 	"simple_tiktok/internal/modules/video"
 	"simple_tiktok/internal/svc"
-	"log"
 )
 
 func main() {
