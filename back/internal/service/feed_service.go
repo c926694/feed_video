@@ -14,28 +14,40 @@ import (
 	"strconv"
 	"time"
 
-	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/redis/go-redis/v9"
+	"github.com/segmentio/kafka-go"
 )
 
 type FeedService struct {
 	videoRepo   *mysql2.VideoRepo
 	userRepo    *mysql2.UserRepo
 	redisClient *redis.Client
-	hotMQ       *amqp.Channel
+	hotWriter   *kafka.Writer
 }
 
 func NewFeedService(
 	videoRepo *mysql2.VideoRepo,
 	userRepo *mysql2.UserRepo,
 	redisClient *redis.Client,
-	hotMQ *amqp.Channel,
+	kafkaBrokers []string,
 ) *FeedService {
+	var hotWriter *kafka.Writer
+	if len(kafkaBrokers) > 0 {
+		hotWriter = &kafka.Writer{
+			Addr:                   kafka.TCP(kafkaBrokers...),
+			Topic:                  event.VideoHotTopic,
+			Balancer:               &kafka.LeastBytes{},
+			RequiredAcks:           kafka.RequireOne,
+			Async:                  false,
+			BatchTimeout:           10 * time.Millisecond,
+			AllowAutoTopicCreation: true,
+		}
+	}
 	return &FeedService{
 		videoRepo:   videoRepo,
 		userRepo:    userRepo,
 		redisClient: redisClient,
-		hotMQ:       hotMQ,
+		hotWriter:   hotWriter,
 	}
 }
 
@@ -270,7 +282,7 @@ func (s *FeedService) InvalidateVideoInfoCache(videoID uint64) error {
 }
 
 func (s *FeedService) PublishVideoHotEvent(videoID uint64, delta float64) error {
-	if s.hotMQ == nil || delta == 0 {
+	if s.hotWriter == nil || delta == 0 {
 		return nil
 	}
 	data, err := json.Marshal(event.VideoHotEvent{
@@ -281,8 +293,10 @@ func (s *FeedService) PublishVideoHotEvent(videoID uint64, delta float64) error 
 	if err != nil {
 		return err
 	}
-	msg := amqp.Publishing{ContentType: "application/json", Body: data}
-	return s.hotMQ.Publish(event.VideoHotExchange, event.VideoHotRoutingKey, false, false, msg)
+	return s.hotWriter.WriteMessages(context.Background(), kafka.Message{
+		Key:   []byte(fmt.Sprintf("%d", videoID)),
+		Value: data,
+	})
 }
 
 func (s *FeedService) MustInvalidateVideoInfoCache(videoID uint64) {

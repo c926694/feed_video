@@ -6,23 +6,18 @@ import (
 	"simple_tiktok/internal/svc"
 
 	"github.com/gin-gonic/gin"
+	kafkaproducer "simple_tiktok/internal/mq/kafka/producer"
 )
 
 func RegisterHTTP(r *gin.Engine, ctx *svc.ServiceContext) (*gin.Engine, error) {
 	videoRepo := NewVideoRepo(ctx.DB)
 	userRepo := NewUserRepo(ctx.DB)
 	commentRepo := NewCommentRepo(ctx.DB)
-	hotMQ, err := ctx.RabbitConn.Channel()
-	if err != nil {
-		return nil, err
-	}
-	feedService := service.NewFeedService(videoRepo, userRepo, ctx.Redis, hotMQ)
+	videoHotProducer := kafkaproducer.NewProducer(ctx.KafkaBrokers, kafkaproducer.VideoHotTopic)
+	feedService := service.NewFeedService(videoRepo, userRepo, ctx.Redis, ctx.KafkaBrokers)
 
-	videoMQ, err := ctx.RabbitConn.Channel()
-	if err != nil {
-		return nil, err
-	}
-	videoService := NewService(videoRepo, userRepo, ctx.Redis, videoMQ, commentRepo, feedService)
+	deleteProducer := kafkaproducer.NewProducer(ctx.KafkaBrokers, kafkaproducer.DeleteVideoTopic)
+	videoService := NewService(videoRepo, userRepo, ctx.Redis, deleteProducer.Writer, commentRepo, feedService)
 	httpHandler := NewHTTPHandler(videoService)
 	videoGroup := r.Group("videos")
 	{
@@ -31,5 +26,6 @@ func RegisterHTTP(r *gin.Engine, ctx *svc.ServiceContext) (*gin.Engine, error) {
 		videoGroup.GET("/me", middleware.JWTAuth(ctx.Redis), httpHandler.GetMyVideos)
 		videoGroup.GET("/:id", middleware.JWTAuth(ctx.Redis), httpHandler.GetVideoInfo)
 	}
+	_ = videoHotProducer
 	return r, nil
 }

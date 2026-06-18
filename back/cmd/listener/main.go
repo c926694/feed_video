@@ -3,7 +3,7 @@ package main
 import (
 	"log"
 	"simple_tiktok/internal/app"
-	initialize2 "simple_tiktok/internal/initialize"
+	"simple_tiktok/internal/initialize"
 	"simple_tiktok/internal/modules/feed"
 	"simple_tiktok/internal/modules/follow"
 	"simple_tiktok/internal/modules/like"
@@ -12,23 +12,23 @@ import (
 )
 
 func main() {
-	cfg, err := initialize2.LoadConfig("config/config.yaml")
+	cfg, err := initialize.LoadConfig("config/config.yaml")
 	if err != nil {
 		log.Fatalf("init config err: %v", err)
 	}
-	if _, err := initialize2.InitMySQL(cfg.MySQL); err != nil {
+	if _, err := initialize.InitMySQL(cfg.MySQL); err != nil {
 		log.Fatalf("init mysql err: %v", err)
 	}
-	if _, err := initialize2.InitRedis(cfg.Redis); err != nil {
+	if _, err := initialize.InitRedis(cfg.Redis); err != nil {
 		log.Fatalf("init redis err: %v", err)
 	}
-	if _, _, err := initialize2.InitRabbitMQ(cfg.RabbitMQ); err != nil {
-		log.Fatalf("init rabbitmq err: %v", err)
+	if _, err := initialize.InitKafka(cfg.Kafka); err != nil {
+		log.Fatalf("init kafka err: %v", err)
 	}
 	ctx := &svc.ServiceContext{
-		DB:         initialize2.DB,
-		Redis:      initialize2.RedisClient,
-		RabbitConn: initialize2.RabbitConn,
+		DB:           initialize.DB,
+		Redis:        initialize.RedisClient,
+		KafkaBrokers: cfg.Kafka.Brokers,
 	}
 	runner := app.NewConsumerRunner()
 	if err := like.RegisterConsumers(runner, ctx); err != nil {
@@ -43,7 +43,7 @@ func main() {
 	if err := feed.RegisterConsumers(runner, ctx); err != nil {
 		log.Fatalf("register feed consumers err: %v", err)
 	}
-	log.Println("开始监听mq")
+	log.Println("开始监听kafka")
 	errCh := runner.StartAll()
 	err = <-errCh
 	if err != nil {

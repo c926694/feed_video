@@ -5,14 +5,13 @@ import (
 	"simple_tiktok/internal/svc"
 
 	"github.com/gin-gonic/gin"
+	kafkaproducer "simple_tiktok/internal/mq/kafka/producer"
 )
 
 func RegisterHTTP(r *gin.Engine, ctx *svc.ServiceContext) (*gin.Engine, error) {
-	serviceChannel, err := ctx.RabbitConn.Channel()
-	if err != nil {
-		return nil, err
-	}
-	likeService := NewService(ctx.Redis, serviceChannel)
+	likeVideoWriter := kafkaproducer.NewProducer(ctx.KafkaBrokers, kafkaproducer.LikeVideoTopic)
+	likeCommentWriter := kafkaproducer.NewProducer(ctx.KafkaBrokers, kafkaproducer.LikeCommentTopic)
+	likeService := NewService(ctx.Redis, likeVideoWriter.Writer, likeCommentWriter.Writer)
 	httpHandler := NewHTTPHandler(likeService)
 	likeGroup := r.Group("likes")
 	{

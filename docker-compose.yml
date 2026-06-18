@@ -35,23 +35,41 @@ services:
       timeout: 5s
       retries: 10
 
-  rabbitmq:
-    image: rabbitmq:3-management
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
     restart: unless-stopped
     environment:
-      RABBITMQ_DEFAULT_USER: guest
-      RABBITMQ_DEFAULT_PASS: guest
-      TZ: Asia/Shanghai
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
     ports:
-      - "5674:5673"
-      - "15674:15673"
-    volumes:
-      - ./deploy/rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
-      - rabbitmq_data:/var/lib/rabbitmq
+      - "2181:2181"
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      test: ["CMD", "echo", "ruok", "|", "nc", "localhost", "2181"]
       interval: 10s
       timeout: 5s
+      retries: 10
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    restart: unless-stopped
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      TZ: Asia/Shanghai
+    ports:
+      - "9093:9092"
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 10s
+      timeout: 10s
       retries: 10
 
   backend:
@@ -73,7 +91,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      rabbitmq:
+      kafka:
         condition: service_healthy
 
   listener:
@@ -94,7 +112,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      rabbitmq:
+      kafka:
         condition: service_healthy
 
   web:
@@ -113,5 +131,6 @@ services:
 volumes:
   mysql_data:
   redis_data:
-  rabbitmq_data:
+  zookeeper_data:
+  kafka_data:
   app_storage:

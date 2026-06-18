@@ -18,18 +18,18 @@ import (
 	"strings"
 	"time"
 
-	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/redis/go-redis/v9"
+	"github.com/segmentio/kafka-go"
 	"gorm.io/gorm"
 )
 
 type Service struct {
-	videoRepo   *VideoRepo
-	userRepo    *UserRepo
-	redisClient *redis.Client
-	videoMQ     *amqp.Channel
-	commentRepo *CommentRepo
-	feedService *service.FeedService
+	videoRepo    *VideoRepo
+	userRepo     *UserRepo
+	redisClient  *redis.Client
+	deleteWriter *kafka.Writer
+	commentRepo  *CommentRepo
+	feedService  *service.FeedService
 }
 
 type videoInfoCacheEnvelope struct {
@@ -58,17 +58,17 @@ func NewService(
 	videoRepo *VideoRepo,
 	userRepo *UserRepo,
 	redisClient *redis.Client,
-	videoMQ *amqp.Channel,
+	deleteWriter *kafka.Writer,
 	commentRepo *CommentRepo,
 	feedService *service.FeedService,
 ) *Service {
 	return &Service{
-		videoRepo:   videoRepo,
-		userRepo:    userRepo,
-		redisClient: redisClient,
-		videoMQ:     videoMQ,
-		commentRepo: commentRepo,
-		feedService: feedService,
+		videoRepo:    videoRepo,
+		userRepo:     userRepo,
+		redisClient:  redisClient,
+		deleteWriter: deleteWriter,
+		commentRepo:  commentRepo,
+		feedService:  feedService,
 	}
 }
 
@@ -240,12 +240,14 @@ func (s *Service) DeleteVideo(videoID uint64, userID uint64) error {
 		}
 	}
 
-	videoProducer := s.videoMQ
-	msg, err := s.getDeleteVideoEvent(video)
+	msgData, err := s.getDeleteVideoEvent(video)
 	if err != nil {
 		return err
 	}
-	err = videoProducer.Publish(event.DeleteVideoExchange, event.DeleteVideoRoutingKey, false, false, msg)
+	err = s.deleteWriter.WriteMessages(context.Background(), kafka.Message{
+		Key:   []byte(fmt.Sprintf("%d", videoID)),
+		Value: msgData,
+	})
 	if err != nil {
 		return err
 	}
@@ -484,17 +486,10 @@ func (s *Service) invalidateVideoInfoCache(videoID uint64) {
 	_ = s.redisClient.Del(context.Background(), cacheKey).Err()
 }
 
-func (s *Service) getDeleteVideoEvent(video model.Video) (amqp.Publishing, error) {
+func (s *Service) getDeleteVideoEvent(video model.Video) ([]byte, error) {
 	deleteVideoEvent := event.DeleteVideoEvent{
 		PlayURL:  video.PlayURL,
 		CoverURL: video.CoverURL,
 	}
-	data, err := json.Marshal(deleteVideoEvent)
-	if err != nil {
-		return amqp.Publishing{}, err
-	}
-	return amqp.Publishing{
-		ContentType: "application/json",
-		Body:        data,
-	}, nil
+	return json.Marshal(deleteVideoEvent)
 }

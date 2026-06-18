@@ -1,43 +1,28 @@
-package event
+package message
 
-type LikeVideoEvent struct {
+type LikeVideoMessage struct {
 	EventType string `json:"event"`
 	VideoId   uint64 `json:"videoId"`
 }
 
-type LikeCommentEvent struct {
+type LikeCommentMessage struct {
 	EventType string `json:"event"`
 	CommentId uint64 `json:"commentId"`
 }
 
-type DeleteVideoEvent struct {
+type DeleteVideoMessage struct {
 	PlayURL  string `json:"playUrl"`
 	CoverURL string `json:"coverUrl"`
 }
 
-type FollowEvent struct {
+type FollowMessage struct {
 	EventType string `json:"event"`
 	Following uint64 `json:"following"`
 	Follower  uint64 `json:"follower"`
 }
 
-type VideoHotEvent struct {
+type VideoHotMessage struct {
 	VideoId     uint64  `json:"videoId"`
 	ScoreDelta  float64 `json:"scoreDelta"`
 	MinuteStamp int64   `json:"minuteStamp,omitempty"`
 }
-
-const (
-	Like     = "like"
-	Dislike  = "dislike"
-	Follow   = "follow"
-	Unfollow = "unfollow"
-)
-
-const (
-	LikeVideoTopic   = "like_video"
-	LikeCommentTopic = "like_comment"
-	DeleteVideoTopic = "video_delete"
-	FollowTopic      = "follow"
-	VideoHotTopic    = "video_hot"
-)

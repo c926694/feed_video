@@ -7,12 +7,12 @@ import (
 )
 
 type Config struct {
-	Server   ServerConfig   `mapstructure:"server"`
-	MySQL    MySQLConfig    `mapstructure:"mysql"`
-	Redis    RedisConfig    `mapstructure:"redis"`
-	RabbitMQ RabbitMQConfig `mapstructure:"rabbitmq"`
-	JWT      JWTConfig      `mapstructure:"jwt"`
-	Upload   UploadConfig   `mapstructure:"upload"`
+	Server ServerConfig `mapstructure:"server"`
+	MySQL  MySQLConfig  `mapstructure:"mysql"`
+	Redis  RedisConfig  `mapstructure:"redis"`
+	Kafka  KafkaConfig  `mapstructure:"kafka"`
+	JWT    JWTConfig    `mapstructure:"jwt"`
+	Upload UploadConfig `mapstructure:"upload"`
 }
 
 type ServerConfig struct {
@@ -34,13 +34,6 @@ type RedisConfig struct {
 	Port     int    `mapstructure:"port"`
 	Password string `mapstructure:"password"`
 	DB       int    `mapstructure:"db"`
-}
-
-type RabbitMQConfig struct {
-	Host     string `mapstructure:"host"`
-	Port     int    `mapstructure:"port"`
-	Username string `mapstructure:"username"`
-	Password string `mapstructure:"password"`
 }
 
 type JWTConfig struct {

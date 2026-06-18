@@ -2,8 +2,8 @@ package feed
 
 import (
 	"simple_tiktok/internal/middleware"
-	"simple_tiktok/internal/svc"
 	"simple_tiktok/internal/service"
+	"simple_tiktok/internal/svc"
 
 	"github.com/gin-gonic/gin"
 )
@@ -11,11 +11,7 @@ import (
 func RegisterHTTP(r *gin.Engine, ctx *svc.ServiceContext) (*gin.Engine, error) {
 	videoRepo := NewVideoRepo(ctx.DB)
 	userRepo := NewUserRepo(ctx.DB)
-	hotMQ, err := ctx.RabbitConn.Channel()
-	if err != nil {
-		return nil, err
-	}
-	feedService := service.NewFeedService(videoRepo, userRepo, ctx.Redis, hotMQ)
+	feedService := service.NewFeedService(videoRepo, userRepo, ctx.Redis, ctx.KafkaBrokers)
 	httpHandler := NewHTTPHandler(feedService)
 	feedGroup := r.Group("videos")
 	{

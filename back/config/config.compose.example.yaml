@@ -16,11 +16,9 @@ redis:
   password: ""
   db: 0
 
-rabbitmq:
-  host: rabbitmq
-  port: 5673
-  username: guest
-  password: guest
+kafka:
+  brokers:
+    - kafka:9092
 
 jwt:
   secret: "a9f3kLm92Jd8sKqP0xZr7Tn4WbC6Yh1V"

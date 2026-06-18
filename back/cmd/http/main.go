@@ -31,10 +31,10 @@ func main() {
 		log.Fatalf("init redis failed: %v", err)
 	}
 
-	if _, _, err = initialize2.InitRabbitMQ(cfg.RabbitMQ); err != nil {
-		log.Fatalf("init rabbitmq failed: %v", err)
+	if _, err = initialize2.InitKafka(cfg.Kafka); err != nil {
+		log.Fatalf("init kafka failed: %v", err)
 	}
-	defer initialize2.CloseRabbitMQ()
+	defer initialize2.CloseKafka()
 
 	if err = initialize2.AutoMigrate(initialize2.DB); err != nil {
 		log.Fatalf("auto migrate failed: %v", err)
@@ -46,9 +46,9 @@ func main() {
 
 	gin.SetMode(cfg.Server.Mode)
 	ctx := &svc.ServiceContext{
-		DB:         initialize2.DB,
-		Redis:      initialize2.RedisClient,
-		RabbitConn: initialize2.RabbitConn,
+		DB:           initialize2.DB,
+		Redis:        initialize2.RedisClient,
+		KafkaBrokers: cfg.Kafka.Brokers,
 	}
 	r := gin.Default()
 	if _, err := user.RegisterHTTP(r, ctx); err != nil {

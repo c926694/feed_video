@@ -10,13 +10,13 @@ import (
 	"simple_tiktok/internal/mq/event"
 	"simple_tiktok/internal/pkg/constants"
 
-	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/redis/go-redis/v9"
+	"github.com/segmentio/kafka-go"
 )
 
 type Service struct {
-	redisClient *redis.Client
-	followMQ    *amqp.Channel
+	redisClient  *redis.Client
+	followWriter *kafka.Writer
 }
 
 var switchFollowScript = redis.NewScript(`
@@ -28,10 +28,10 @@ redis.call("SADD", KEYS[1], ARGV[1])
 return 1
 `)
 
-func NewService(redisClient *redis.Client, followMQ *amqp.Channel) *Service {
+func NewService(redisClient *redis.Client, followWriter *kafka.Writer) *Service {
 	return &Service{
-		redisClient: redisClient,
-		followMQ:    followMQ,
+		redisClient:  redisClient,
+		followWriter: followWriter,
 	}
 }
 
@@ -56,13 +56,16 @@ func (s *Service) Follow(targetUserID uint64, currentUserID uint64) (res.FollowR
 		}
 	}
 
-	msg, err := s.getFollowEventMsg(targetUserID, currentUserID, eventType)
+	msgData, err := s.getFollowEventMsg(targetUserID, currentUserID, eventType)
 	if err != nil {
 		return res.FollowRes{}, err
 	}
 
 	log.Printf("follow switch follower=%d following=%d followed=%t", currentUserID, targetUserID, followed)
-	err = s.followMQ.Publish(event.FollowExchange, event.FollowRoutingKey, false, false, msg)
+	err = s.followWriter.WriteMessages(context.Background(), kafka.Message{
+		Key:   []byte(fmt.Sprintf("%d", targetUserID)),
+		Value: msgData,
+	})
 	if err != nil {
 		if rollbackErr := rollback(); rollbackErr != nil {
 			log.Printf("follow publish failed and rollback failed follower=%d following=%d err=%v rollback_err=%v", currentUserID, targetUserID, err, rollbackErr)
@@ -83,11 +86,7 @@ func (s *Service) switchFollow(ctx context.Context, key string, following uint64
 	return result == 1, nil
 }
 
-func (s *Service) getFollowEventMsg(following uint64, follower uint64, eventType string) (amqp.Publishing, error) {
+func (s *Service) getFollowEventMsg(following uint64, follower uint64, eventType string) ([]byte, error) {
 	e := event.FollowEvent{Following: following, Follower: follower, EventType: eventType}
-	data, err := json.Marshal(e)
-	if err != nil {
-		return amqp.Publishing{}, err
-	}
-	return amqp.Publishing{ContentType: "application/json", Body: data}, nil
+	return json.Marshal(e)
 }

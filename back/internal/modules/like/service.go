@@ -9,13 +9,14 @@ import (
 	"simple_tiktok/internal/mq/event"
 	"simple_tiktok/internal/pkg/constants"
 
-	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/redis/go-redis/v9"
+	"github.com/segmentio/kafka-go"
 )
 
 type Service struct {
-	redisClient *redis.Client
-	likeMQ      *amqp.Channel
+	redisClient       *redis.Client
+	likeVideoWriter   *kafka.Writer
+	likeCommentWriter *kafka.Writer
 }
 
 var switchLikeScript = redis.NewScript(`
@@ -27,10 +28,11 @@ redis.call("SADD", KEYS[1], ARGV[1])
 return 1
 `)
 
-func NewService(redisClient *redis.Client, ch *amqp.Channel) *Service {
+func NewService(redisClient *redis.Client, likeVideoWriter *kafka.Writer, likeCommentWriter *kafka.Writer) *Service {
 	return &Service{
-		redisClient: redisClient,
-		likeMQ:      ch,
+		redisClient:       redisClient,
+		likeVideoWriter:   likeVideoWriter,
+		likeCommentWriter: likeCommentWriter,
 	}
 }
 
@@ -52,13 +54,16 @@ func (s *Service) LikeVideo(targetID uint64, userID uint64) (res.LikeVideoRes, e
 		}
 	}
 
-	msg, err := s.getLikeVideoEventMsg(targetID, eventType)
+	msgData, err := s.getLikeVideoEventMsg(targetID, eventType)
 	if err != nil {
 		return res.LikeVideoRes{}, err
 	}
 
 	log.Printf("like switch video_id=%d user_id=%d liked=%t", targetID, userID, liked)
-	err = s.likeMQ.Publish(event.LikeVideoExchange, event.LikeVideoRoutingKey, false, false, msg)
+	err = s.likeVideoWriter.WriteMessages(context.Background(), kafka.Message{
+		Key:   []byte(fmt.Sprintf("%d", targetID)),
+		Value: msgData,
+	})
 	if err != nil {
 		if rollbackErr := rollback(); rollbackErr != nil {
 			log.Printf("like publish failed and rollback failed video_id=%d user_id=%d err=%v rollback_err=%v", targetID, userID, err, rollbackErr)
@@ -87,13 +92,16 @@ func (s *Service) LikeComment(commentID uint64, userID uint64) (res.LikeCommentR
 		}
 	}
 
-	msg, err := s.getLikeCommentEventMsg(commentID, eventType)
+	msgData, err := s.getLikeCommentEventMsg(commentID, eventType)
 	if err != nil {
 		return res.LikeCommentRes{}, err
 	}
 
 	log.Printf("comment like switch comment_id=%d user_id=%d liked=%t", commentID, userID, liked)
-	err = s.likeMQ.Publish(event.LikeCommentExchange, event.LikeCommentRoutingKey, false, false, msg)
+	err = s.likeCommentWriter.WriteMessages(context.Background(), kafka.Message{
+		Key:   []byte(fmt.Sprintf("%d", commentID)),
+		Value: msgData,
+	})
 	if err != nil {
 		if rollbackErr := rollback(); rollbackErr != nil {
 			log.Printf("comment like publish failed and rollback failed comment_id=%d user_id=%d err=%v rollback_err=%v", commentID, userID, err, rollbackErr)
@@ -112,26 +120,12 @@ func (s *Service) switchLike(ctx context.Context, key string, userID uint64) (bo
 	return result == 1, nil
 }
 
-func (s *Service) getLikeVideoEventMsg(videoID uint64, eventType string) (amqp.Publishing, error) {
+func (s *Service) getLikeVideoEventMsg(videoID uint64, eventType string) ([]byte, error) {
 	e := event.LikeVideoEvent{VideoId: videoID, EventType: eventType}
-	data, err := json.Marshal(e)
-	if err != nil {
-		return amqp.Publishing{}, err
-	}
-	return amqp.Publishing{
-		ContentType: "application/json",
-		Body:        data,
-	}, nil
+	return json.Marshal(e)
 }
 
-func (s *Service) getLikeCommentEventMsg(commentID uint64, eventType string) (amqp.Publishing, error) {
+func (s *Service) getLikeCommentEventMsg(commentID uint64, eventType string) ([]byte, error) {
 	e := event.LikeCommentEvent{CommentId: commentID, EventType: eventType}
-	data, err := json.Marshal(e)
-	if err != nil {
-		return amqp.Publishing{}, err
-	}
-	return amqp.Publishing{
-		ContentType: "application/json",
-		Body:        data,
-	}, nil
+	return json.Marshal(e)
 }
