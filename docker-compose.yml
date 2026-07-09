@@ -2,17 +2,17 @@ services:
   mysql:
     image: mysql:8.0
     restart: unless-stopped
-    command: >
-      --port=3307
-      --default-authentication-plugin=mysql_native_password
-      --character-set-server=utf8mb4
-      --collation-server=utf8mb4_unicode_ci
+    command:
+      - --port=3307
+      - --default-authentication-plugin=mysql_native_password
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
     environment:
       MYSQL_ROOT_PASSWORD: "1234"
       MYSQL_DATABASE: feed_video
       TZ: Asia/Shanghai
     ports:
-      - "3308:3307"
+      - "3307:3307"
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
@@ -20,13 +20,14 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 20s
 
   redis:
     image: redis:7-alpine
-    command: ["redis-server", "--port", "6380"]
     restart: unless-stopped
+    command: ["redis-server", "--port", "6380"]
     ports:
-      - "6381:6380"
+      - "6380:6380"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -35,42 +36,32 @@ services:
       timeout: 5s
       retries: 10
 
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.5.0
-    restart: unless-stopped
-    environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000
-    ports:
-      - "2181:2181"
-    healthcheck:
-      test: ["CMD", "echo", "ruok", "|", "nc", "localhost", "2181"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-
   kafka:
-    image: confluentinc/cp-kafka:7.5.0
+    image: bitnami/kafka:3.7
     restart: unless-stopped
-    depends_on:
-      zookeeper:
-        condition: service_healthy
     environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_ENABLE_KRAFT: "yes"
+      KAFKA_CFG_NODE_ID: "1"
+      KAFKA_CFG_PROCESS_ROLES: broker,controller
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CFG_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_KRAFT_CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "true"
+      ALLOW_PLAINTEXT_LISTENER: "yes"
       TZ: Asia/Shanghai
     ports:
-      - "9093:9092"
+      - "9092:9092"
+    volumes:
+      - kafka_data:/bitnami/kafka
     healthcheck:
-      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      test: ["CMD-SHELL", "/opt/bitnami/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
       interval: 10s
       timeout: 10s
       retries: 10
+      start_period: 20s
 
   backend:
     build:
@@ -82,7 +73,7 @@ services:
       STORAGE_PATH: /app/storage
       HTTP_PATH: /static/
     ports:
-      - "8082:8081"
+      - "8081:8081"
     volumes:
       - app_storage:/app/storage
       - ./back/config/config.compose.example.yaml:/app/config/config.yaml:ro
@@ -121,7 +112,7 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     ports:
-      - "82:81"
+      - "81:81"
     volumes:
       - app_storage:/var/www/static:ro
     depends_on:
@@ -131,6 +122,5 @@ services:
 volumes:
   mysql_data:
   redis_data:
-  zookeeper_data:
   kafka_data:
   app_storage:
