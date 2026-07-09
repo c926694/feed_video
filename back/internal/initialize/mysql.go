@@ -36,3 +36,14 @@ func InitMySQL(cfg MySQLConfig) (*gorm.DB, error) {
 	DB = db
 	return db, nil
 }
+
+func CloseMySQL() {
+	if DB == nil {
+		return
+	}
+	sqlDB, err := DB.DB()
+	if err != nil {
+		return
+	}
+	_ = sqlDB.Close()
+}

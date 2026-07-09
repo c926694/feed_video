@@ -27,3 +27,9 @@ func InitRedis(cfg RedisConfig) (*redis.Client, error) {
 	RedisClient = client
 	return client, nil
 }
+
+func CloseRedis() {
+	if RedisClient != nil {
+		_ = RedisClient.Close()
+	}
+}

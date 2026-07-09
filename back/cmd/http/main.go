@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	initialize2 "simple_tiktok/internal/initialize"
 	"simple_tiktok/internal/modules/comment"
@@ -13,11 +16,16 @@ import (
 	"simple_tiktok/internal/modules/user"
 	"simple_tiktok/internal/modules/video"
 	"simple_tiktok/internal/svc"
+	"syscall"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
 func main() {
+	runCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	cfg, err := initialize2.LoadConfig("config/config.yaml")
 	if err != nil {
 		log.Fatalf("load config failed: %v", err)
@@ -26,10 +34,12 @@ func main() {
 	if _, err = initialize2.InitMySQL(cfg.MySQL); err != nil {
 		log.Fatalf("init mysql failed: %v", err)
 	}
+	defer initialize2.CloseMySQL()
 
 	if _, err = initialize2.InitRedis(cfg.Redis); err != nil {
 		log.Fatalf("init redis failed: %v", err)
 	}
+	defer initialize2.CloseRedis()
 
 	if _, err = initialize2.InitKafka(cfg.Kafka); err != nil {
 		log.Fatalf("init kafka failed: %v", err)
@@ -72,7 +82,23 @@ func main() {
 
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
 	log.Println("监听端口:", addr)
-	if err = r.Run(addr); err != nil {
+
+	server := &http.Server{
+		Addr:    addr,
+		Handler: r,
+	}
+
+	go func() {
+		<-runCtx.Done()
+		log.Println("收到停止信号，正在关闭 http 服务")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if shutdownErr := server.Shutdown(shutdownCtx); shutdownErr != nil {
+			log.Printf("shutdown http failed: %v", shutdownErr)
+		}
+	}()
+
+	if err = server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("start http failed: %v", err)
 	}
 }
