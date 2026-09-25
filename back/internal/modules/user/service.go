@@ -3,36 +3,33 @@ package user
 import (
 	"context"
 	"errors"
-	"fmt"
 	"mime/multipart"
+	"strings"
+
+	"gorm.io/gorm"
+
 	"simple_tiktok/internal/dto/req"
 	"simple_tiktok/internal/dto/res"
-	"simple_tiktok/internal/initialize"
-	"simple_tiktok/internal/middleware"
 	"simple_tiktok/internal/pkg/constants"
 	"simple_tiktok/internal/pkg/hash_password"
-	"simple_tiktok/internal/pkg/jwt"
-	"simple_tiktok/internal/pkg/upload"
-	"simple_tiktok/internal/pkg/util"
+	"simple_tiktok/internal/platform/auth"
 	"simple_tiktok/internal/platform/httpx"
-	"strings"
-	"time"
-
-	"github.com/redis/go-redis/v9"
-	"gorm.io/gorm"
+	"simple_tiktok/internal/platform/upload"
 )
 
 type Service struct {
 	userRepo  *UserRepo
 	videoRepo *VideoRepo
-	userRedis *redis.Client
+	auth      *auth.Service
+	uploader  *upload.Uploader
 }
 
-func NewService(userRepo *UserRepo, videoRepo *VideoRepo, redisClient *redis.Client) *Service {
+func NewService(userRepo *UserRepo, videoRepo *VideoRepo, authService *auth.Service, uploader *upload.Uploader) *Service {
 	return &Service{
 		userRepo:  userRepo,
 		videoRepo: videoRepo,
-		userRedis: redisClient,
+		auth:      authService,
+		uploader:  uploader,
 	}
 }
 
@@ -40,8 +37,7 @@ func (s *Service) Register(ctx context.Context, registerReq req.RegisterReq) (ui
 	if registerReq.Password != registerReq.RePassword {
 		return 0, httpx.New(httpx.CodeBadRequest, "两次输入的密码不一致")
 	}
-	err := checkValidUsernameAndPassword(registerReq.Username, registerReq.Password)
-	if err != nil {
+	if err := checkValidUsernameAndPassword(registerReq.Username, registerReq.Password); err != nil {
 		return 0, err
 	}
 	hashPassword, err := hash_password.HashPassword(registerReq.Password)
@@ -59,9 +55,8 @@ func (s *Service) Register(ctx context.Context, registerReq req.RegisterReq) (ui
 	return user.ID, nil
 }
 
-func (s *Service) Login(username string, password string) (string, error) {
-	err := checkValidUsernameAndPassword(username, password)
-	if err != nil {
+func (s *Service) Login(ctx context.Context, username string, password string) (string, error) {
+	if err := checkValidUsernameAndPassword(username, password); err != nil {
 		return "", err
 	}
 	user, err := s.userRepo.GetUserByUserNameAndPassword(username)
@@ -71,22 +66,10 @@ func (s *Service) Login(username string, password string) (string, error) {
 		}
 		return "", err
 	}
-	right := hash_password.CheckPassword(password, user.Password)
-	if !right {
+	if !hash_password.CheckPassword(password, user.Password) {
 		return "", httpx.New(httpx.CodeCredential, "用户名或密码错误")
 	}
-	token, err := jwt.GenerateToken(user.ID, user.NickName)
-	if err != nil {
-		return "", err
-	}
-	key := fmt.Sprintf(middleware.TokenKey, user.ID)
-	expire := initialize.AppConfig.JWT.ExpireHours
-	ctx := context.Background()
-	_, err = s.userRedis.Set(ctx, key, token, time.Duration(expire)*time.Hour).Result()
-	if err != nil {
-		return "", err
-	}
-	return token, nil
+	return s.auth.GenerateToken(ctx, user.ID, user.NickName)
 }
 
 func (s *Service) GetUserInfo(userID uint64) (*res.UserInfoRes, error) {
@@ -105,7 +88,7 @@ func (s *Service) GetUserInfo(userID uint64) (*res.UserInfoRes, error) {
 		UserID:        user.ID,
 		Username:      user.Username,
 		Nickname:      user.NickName,
-		AvatarURL:     util.EnsureHTTPPath(user.AvatarURL),
+		AvatarURL:     s.uploader.URL(user.AvatarURL),
 		FollowCount:   user.FollowCount,
 		FollowerCount: user.FollowerCount,
 		VideoCount:    videoCount,
@@ -129,7 +112,7 @@ func (s *Service) UpdateProfile(userID uint64, nickname string, avatar *multipar
 
 	newAvatarPath := ""
 	if avatar != nil {
-		newAvatarPath, err = upload.UploadFile(avatar, upload.Avatar)
+		newAvatarPath, err = s.uploader.Save(avatar, upload.Avatar)
 		if err != nil {
 			return nil, err
 		}
@@ -138,7 +121,7 @@ func (s *Service) UpdateProfile(userID uint64, nickname string, avatar *multipar
 
 	if err = s.userRepo.UpdateProfile(userID, updates); err != nil {
 		if newAvatarPath != "" {
-			_ = upload.Delete(upload.Avatar, newAvatarPath)
+			_ = s.uploader.Delete(upload.Avatar, newAvatarPath)
 		}
 		return nil, err
 	}
@@ -150,18 +133,14 @@ func (s *Service) UpdateProfile(userID uint64, nickname string, avatar *multipar
 	}
 
 	if newAvatarPath != "" && user.AvatarURL != "" && user.AvatarURL != constants.DefaultAvatar {
-		_ = upload.Delete(upload.Avatar, user.AvatarURL)
+		_ = s.uploader.Delete(upload.Avatar, user.AvatarURL)
 	}
 
 	return s.GetUserInfo(userID)
 }
 
-func (s *Service) Logout(userID uint64) error {
-	_, err := s.userRedis.Del(context.Background(), fmt.Sprintf(middleware.TokenKey, userID)).Result()
-	if err != nil {
-		return err
-	}
-	return nil
+func (s *Service) Logout(ctx context.Context, userID uint64) error {
+	return s.auth.Revoke(ctx, userID)
 }
 
 func checkValidUsernameAndPassword(username string, password string) error {

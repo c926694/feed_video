@@ -33,11 +33,3 @@ const (
 	Follow   = "follow"
 	Unfollow = "unfollow"
 )
-
-const (
-	LikeVideoTopic   = "like_video"
-	LikeCommentTopic = "like_comment"
-	DeleteVideoTopic = "video_delete"
-	FollowTopic      = "follow"
-	VideoHotTopic    = "video_hot"
-)

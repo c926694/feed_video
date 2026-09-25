@@ -11,26 +11,26 @@ import (
 	"simple_tiktok/internal/model"
 	"simple_tiktok/internal/mq/event"
 	"simple_tiktok/internal/pkg/constants"
-	"simple_tiktok/internal/pkg/upload"
-	"simple_tiktok/internal/pkg/util"
 	"simple_tiktok/internal/platform/httpx"
+	"simple_tiktok/internal/platform/kafka"
+	"simple_tiktok/internal/platform/upload"
 	"simple_tiktok/internal/service"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/segmentio/kafka-go"
 	"gorm.io/gorm"
 )
 
 type Service struct {
-	videoRepo    *VideoRepo
-	userRepo     *UserRepo
-	redisClient  *redis.Client
-	deleteWriter *kafka.Writer
-	commentRepo  *CommentRepo
-	feedService  *service.FeedService
+	videoRepo   *VideoRepo
+	userRepo    *UserRepo
+	redisClient *redis.Client
+	publisher   *kafka.Publisher
+	commentRepo *CommentRepo
+	feedService *service.FeedService
+	uploader    *upload.Uploader
 }
 
 type videoInfoCacheEnvelope struct {
@@ -59,17 +59,19 @@ func NewService(
 	videoRepo *VideoRepo,
 	userRepo *UserRepo,
 	redisClient *redis.Client,
-	deleteWriter *kafka.Writer,
+	publisher *kafka.Publisher,
 	commentRepo *CommentRepo,
 	feedService *service.FeedService,
+	uploader *upload.Uploader,
 ) *Service {
 	return &Service{
-		videoRepo:    videoRepo,
-		userRepo:     userRepo,
-		redisClient:  redisClient,
-		deleteWriter: deleteWriter,
-		commentRepo:  commentRepo,
-		feedService:  feedService,
+		videoRepo:   videoRepo,
+		userRepo:    userRepo,
+		redisClient: redisClient,
+		publisher:   publisher,
+		commentRepo: commentRepo,
+		feedService: feedService,
+		uploader:    uploader,
 	}
 }
 
@@ -90,16 +92,15 @@ func (s *Service) CreateVideo(uploadReq req.UploadVideoReq, userID uint64, nickN
 		}
 	}
 
-	coverPath, err := upload.UploadFile(cover, upload.Cover)
+	coverPath, err := s.uploader.Save(cover, upload.Cover)
 	if err != nil {
 		return res.VideoRes{}, err
 	}
 
-	playPath, err := upload.UploadFile(play, upload.Video)
+	playPath, err := s.uploader.Save(play, upload.Video)
 	if err != nil {
-		err2 := upload.Delete(upload.Cover, coverPath)
-		if err2 != nil {
-			return res.VideoRes{}, err2
+		if deleteErr := s.uploader.Delete(upload.Cover, coverPath); deleteErr != nil {
+			return res.VideoRes{}, deleteErr
 		}
 		return res.VideoRes{}, err
 	}
@@ -116,9 +117,8 @@ func (s *Service) CreateVideo(uploadReq req.UploadVideoReq, userID uint64, nickN
 
 	err = s.videoRepo.CreateVideo(&video)
 	if err != nil {
-		err2 := upload.Delete(upload.Video, playPath)
-		if err2 != nil {
-			return res.VideoRes{}, err2
+		if deleteErr := s.uploader.Delete(upload.Video, playPath); deleteErr != nil {
+			return res.VideoRes{}, deleteErr
 		}
 		return res.VideoRes{}, err
 	}
@@ -134,7 +134,7 @@ func (s *Service) CreateVideo(uploadReq req.UploadVideoReq, userID uint64, nickN
 	}
 	return res.VideoRes{
 		Id:  video.ID,
-		Url: util.EnsureHTTPPath(video.PlayURL),
+		Url: s.uploader.URL(video.PlayURL),
 	}, nil
 }
 
@@ -151,8 +151,8 @@ func (s *Service) GetMyVideos(userID uint64, limit uint64) ([]res.VideoInfoRes, 
 			AuthorName:   v.AuthorName,
 			Title:        v.Title,
 			Description:  v.Description,
-			CoverURL:     util.EnsureHTTPPath(v.CoverURL),
-			PlayURL:      util.EnsureHTTPPath(v.PlayURL),
+			CoverURL:     s.uploader.URL(v.CoverURL),
+			PlayURL:      s.uploader.URL(v.PlayURL),
 			CreatedAt:    v.CreatedAt,
 			LikeCount:    v.LikeCount,
 			CommentCount: v.CommentCount,
@@ -244,18 +244,12 @@ func (s *Service) DeleteVideo(videoID uint64, userID uint64) error {
 		}
 	}
 
-	msgData, err := s.getDeleteVideoEvent(video)
-	if err != nil {
-		return err
-	}
-	err = s.deleteWriter.WriteMessages(context.Background(), kafka.Message{
-		Key:   []byte(fmt.Sprintf("%d", videoID)),
-		Value: msgData,
-	})
-	if err != nil {
-		return err
-	}
-	return nil
+	return s.publisher.Publish(context.Background(), kafka.TopicVideoDelete,
+		strconv.FormatUint(videoID, 10),
+		event.DeleteVideoEvent{
+			PlayURL:  video.PlayURL,
+			CoverURL: video.CoverURL,
+		})
 }
 
 func (s *Service) fillVideoAuthorAvatar(videoInfoList []res.VideoInfoRes) {
@@ -285,7 +279,7 @@ func (s *Service) fillVideoAuthorAvatar(videoInfoList []res.VideoInfoRes) {
 		}
 		profile := authorProfile{
 			name:   user.NickName,
-			avatar: util.EnsureHTTPPath(user.AvatarURL),
+			avatar: s.uploader.URL(user.AvatarURL),
 		}
 		cache[authorID] = profile
 		if profile.name != "" {
@@ -453,8 +447,8 @@ func (s *Service) loadVideoInfoBaseFromDB(videoID uint64) (res.VideoInfoRes, err
 		AuthorName:   video.AuthorName,
 		Title:        video.Title,
 		Description:  video.Description,
-		CoverURL:     util.EnsureHTTPPath(video.CoverURL),
-		PlayURL:      util.EnsureHTTPPath(video.PlayURL),
+		CoverURL:     s.uploader.URL(video.CoverURL),
+		PlayURL:      s.uploader.URL(video.PlayURL),
 		CommentCount: video.CommentCount,
 		LikeCount:    video.LikeCount,
 		CreatedAt:    video.CreatedAt,
@@ -488,12 +482,4 @@ func (s *Service) releaseVideoInfoLock(lockKey string, lockValue string) {
 func (s *Service) invalidateVideoInfoCache(videoID uint64) {
 	cacheKey := fmt.Sprintf(constants.VideoInfoCacheKey, videoID)
 	_ = s.redisClient.Del(context.Background(), cacheKey).Err()
-}
-
-func (s *Service) getDeleteVideoEvent(video model.Video) ([]byte, error) {
-	deleteVideoEvent := event.DeleteVideoEvent{
-		PlayURL:  video.PlayURL,
-		CoverURL: video.CoverURL,
-	}
-	return json.Marshal(deleteVideoEvent)
 }

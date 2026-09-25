@@ -3,45 +3,32 @@ package video
 import (
 	"context"
 	"encoding/json"
-	"log"
-	"simple_tiktok/internal/modulekit"
-	"simple_tiktok/internal/mq/event"
-	consumer2 "simple_tiktok/internal/mq/kafka/consumer"
-	"simple_tiktok/internal/pkg/upload"
-	"simple_tiktok/internal/repository/mysql"
-	"simple_tiktok/internal/svc"
+	"errors"
 
-	"github.com/segmentio/kafka-go"
+	"simple_tiktok/internal/mq/event"
+	"simple_tiktok/internal/platform/kafka"
+	"simple_tiktok/internal/platform/upload"
+	"simple_tiktok/internal/svc"
 )
 
-func RegisterConsumers(registrar modulekit.ConsumerRegistrar, ctx *svc.ServiceContext) error {
-	videoRepo := mysql.NewVideoRepo(ctx.DB)
-
-	deleteVideoConsumer := consumer2.NewConsumer(ctx.KafkaBrokers, event.DeleteVideoTopic, "video-delete-group")
-
-	registrar.Add("video.delete", func() error {
-		return deleteVideoConsumer.Consume(context.Background(), func(ctx context.Context, msg kafka.Message) error {
-			return handleDeleteVideo(msg, videoRepo)
-		})
+func RegisterConsumers(sub *kafka.Subscriber, ctx *svc.ServiceContext) error {
+	sub.Subscribe(kafka.TopicVideoDelete, func(handlerCtx context.Context, payload []byte) error {
+		return handleDeleteVideo(handlerCtx, payload, ctx.Upload)
 	})
 	return nil
 }
 
-func handleDeleteVideo(msg kafka.Message, videoRepo *mysql.VideoRepo) error {
+// handleDeleteVideo 消费视频删除事件，删除存储目录里的视频与封面文件
+func handleDeleteVideo(ctx context.Context, payload []byte, uploader *upload.Uploader) error {
 	var deleteVideoEvent event.DeleteVideoEvent
-	if err := json.Unmarshal(msg.Value, &deleteVideoEvent); err != nil {
-		log.Println(err)
+	if err := json.Unmarshal(payload, &deleteVideoEvent); err != nil {
+		return kafka.Permanent(err)
+	}
+	if deleteVideoEvent.PlayURL == "" && deleteVideoEvent.CoverURL == "" {
+		return kafka.Permanent(errors.New("删除视频事件里没有文件路径"))
+	}
+	if err := uploader.Delete(upload.Video, deleteVideoEvent.PlayURL); err != nil {
 		return err
 	}
-	err := upload.Delete(upload.Video, deleteVideoEvent.PlayURL)
-	if err != nil {
-		log.Println(err)
-		return err
-	}
-	err = upload.Delete(upload.Cover, deleteVideoEvent.CoverURL)
-	if err != nil {
-		log.Println(err)
-		return err
-	}
-	return nil
+	return uploader.Delete(upload.Cover, deleteVideoEvent.CoverURL)
 }

@@ -2,21 +2,22 @@ package follow
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
+	"strconv"
+
+	"github.com/redis/go-redis/v9"
+
 	"simple_tiktok/internal/dto/res"
 	"simple_tiktok/internal/mq/event"
 	"simple_tiktok/internal/pkg/constants"
 	"simple_tiktok/internal/platform/httpx"
-
-	"github.com/redis/go-redis/v9"
-	"github.com/segmentio/kafka-go"
+	"simple_tiktok/internal/platform/kafka"
 )
 
 type Service struct {
-	redisClient  *redis.Client
-	followWriter *kafka.Writer
+	redisClient *redis.Client
+	publisher   *kafka.Publisher
 }
 
 var switchFollowScript = redis.NewScript(`
@@ -28,47 +29,46 @@ redis.call("SADD", KEYS[1], ARGV[1])
 return 1
 `)
 
-func NewService(redisClient *redis.Client, followWriter *kafka.Writer) *Service {
+func NewService(redisClient *redis.Client, publisher *kafka.Publisher) *Service {
 	return &Service{
-		redisClient:  redisClient,
-		followWriter: followWriter,
+		redisClient: redisClient,
+		publisher:   publisher,
 	}
 }
 
-func (s *Service) Follow(targetUserID uint64, currentUserID uint64) (res.FollowRes, error) {
+func (s *Service) Follow(ctx context.Context, targetUserID uint64, currentUserID uint64) (res.FollowRes, error) {
 	if targetUserID == currentUserID {
 		return res.FollowRes{}, httpx.New(httpx.CodeBadRequest, "不能关注自己")
 	}
 	key := fmt.Sprintf(constants.FollowKey, currentUserID)
-	followed, err := s.switchFollow(context.Background(), key, targetUserID)
+	followed, err := s.switchFollow(ctx, key, targetUserID)
 	if err != nil {
 		return res.FollowRes{}, err
 	}
 
 	eventType := event.Unfollow
 	rollback := func() error {
-		return s.redisClient.SAdd(context.Background(), key, targetUserID).Err()
+		return s.redisClient.SAdd(ctx, key, targetUserID).Err()
 	}
 	if followed {
 		eventType = event.Follow
 		rollback = func() error {
-			return s.redisClient.SRem(context.Background(), key, targetUserID).Err()
+			return s.redisClient.SRem(ctx, key, targetUserID).Err()
 		}
 	}
 
-	msgData, err := s.getFollowEventMsg(targetUserID, currentUserID, eventType)
-	if err != nil {
-		return res.FollowRes{}, err
-	}
-
-	log.Printf("follow switch follower=%d following=%d followed=%t", currentUserID, targetUserID, followed)
-	err = s.followWriter.WriteMessages(context.Background(), kafka.Message{
-		Key:   []byte(fmt.Sprintf("%d", targetUserID)),
-		Value: msgData,
+	err = s.publisher.Publish(ctx, kafka.TopicFollow, strconv.FormatUint(targetUserID, 10), event.FollowEvent{
+		Following: targetUserID,
+		Follower:  currentUserID,
+		EventType: eventType,
 	})
 	if err != nil {
 		if rollbackErr := rollback(); rollbackErr != nil {
-			log.Printf("follow publish failed and rollback failed follower=%d following=%d err=%v rollback_err=%v", currentUserID, targetUserID, err, rollbackErr)
+			slog.Error("关注事件发布失败且状态回滚失败",
+				"follower", currentUserID,
+				"following", targetUserID,
+				"error", err,
+				"rollback_error", rollbackErr)
 		}
 		return res.FollowRes{}, err
 	}
@@ -84,9 +84,4 @@ func (s *Service) switchFollow(ctx context.Context, key string, following uint64
 		return false, err
 	}
 	return result == 1, nil
-}
-
-func (s *Service) getFollowEventMsg(following uint64, follower uint64, eventType string) ([]byte, error) {
-	e := event.FollowEvent{Following: following, Follower: follower, EventType: eventType}
-	return json.Marshal(e)
 }

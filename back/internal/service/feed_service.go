@@ -2,52 +2,43 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"math"
-	"simple_tiktok/internal/dto/res"
-	"simple_tiktok/internal/mq/event"
-	"simple_tiktok/internal/pkg/constants"
-	"simple_tiktok/internal/pkg/util"
-	mysql2 "simple_tiktok/internal/repository/mysql"
 	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/segmentio/kafka-go"
+
+	"simple_tiktok/internal/dto/res"
+	"simple_tiktok/internal/mq/event"
+	"simple_tiktok/internal/pkg/constants"
+	"simple_tiktok/internal/platform/kafka"
+	"simple_tiktok/internal/platform/upload"
+	mysql2 "simple_tiktok/internal/repository/mysql"
 )
 
 type FeedService struct {
 	videoRepo   *mysql2.VideoRepo
 	userRepo    *mysql2.UserRepo
 	redisClient *redis.Client
-	hotWriter   *kafka.Writer
+	publisher   *kafka.Publisher
+	uploader    *upload.Uploader
 }
 
 func NewFeedService(
 	videoRepo *mysql2.VideoRepo,
 	userRepo *mysql2.UserRepo,
 	redisClient *redis.Client,
-	kafkaBrokers []string,
+	publisher *kafka.Publisher,
+	uploader *upload.Uploader,
 ) *FeedService {
-	var hotWriter *kafka.Writer
-	if len(kafkaBrokers) > 0 {
-		hotWriter = &kafka.Writer{
-			Addr:                   kafka.TCP(kafkaBrokers...),
-			Topic:                  event.VideoHotTopic,
-			Balancer:               &kafka.LeastBytes{},
-			RequiredAcks:           kafka.RequireOne,
-			Async:                  false,
-			BatchTimeout:           10 * time.Millisecond,
-			AllowAutoTopicCreation: true,
-		}
-	}
 	return &FeedService{
 		videoRepo:   videoRepo,
 		userRepo:    userRepo,
 		redisClient: redisClient,
-		hotWriter:   hotWriter,
+		publisher:   publisher,
+		uploader:    uploader,
 	}
 }
 
@@ -144,8 +135,8 @@ func (s *FeedService) GetFollowFeedVideos(limit uint64, lastScore float64, userI
 			AuthorName:   v.AuthorName,
 			Title:        v.Title,
 			Description:  v.Description,
-			CoverURL:     util.EnsureHTTPPath(v.CoverURL),
-			PlayURL:      util.EnsureHTTPPath(v.PlayURL),
+			CoverURL:     s.uploader.URL(v.CoverURL),
+			PlayURL:      s.uploader.URL(v.PlayURL),
 			CreatedAt:    v.CreatedAt,
 			LikeCount:    v.LikeCount,
 			CommentCount: v.CommentCount,
@@ -282,20 +273,13 @@ func (s *FeedService) InvalidateVideoInfoCache(videoID uint64) error {
 }
 
 func (s *FeedService) PublishVideoHotEvent(videoID uint64, delta float64) error {
-	if s.hotWriter == nil || delta == 0 {
+	if delta == 0 {
 		return nil
 	}
-	data, err := json.Marshal(event.VideoHotEvent{
+	return s.publisher.Publish(context.Background(), kafka.TopicVideoHot, strconv.FormatUint(videoID, 10), event.VideoHotEvent{
 		VideoId:     videoID,
 		ScoreDelta:  delta,
 		MinuteStamp: time.Now().UTC().Truncate(time.Minute).Unix(),
-	})
-	if err != nil {
-		return err
-	}
-	return s.hotWriter.WriteMessages(context.Background(), kafka.Message{
-		Key:   []byte(fmt.Sprintf("%d", videoID)),
-		Value: data,
 	})
 }
 
@@ -321,7 +305,7 @@ func (s *FeedService) fillVideoAuthorAvatar(videoInfoList []res.VideoInfoRes) {
 		if err != nil || user == nil {
 			continue
 		}
-		profile := res.UserInfoRes{Nickname: user.NickName, AvatarURL: util.EnsureHTTPPath(user.AvatarURL)}
+		profile := res.UserInfoRes{Nickname: user.NickName, AvatarURL: s.uploader.URL(user.AvatarURL)}
 		cache[authorID] = profile
 		if profile.Nickname != "" {
 			videoInfoList[i].AuthorName = profile.Nickname
@@ -412,8 +396,8 @@ func (s *FeedService) getVideoInfoByIDs(ids []uint64) ([]res.VideoInfoRes, error
 			AuthorName:   v.AuthorName,
 			Title:        v.Title,
 			Description:  v.Description,
-			CoverURL:     util.EnsureHTTPPath(v.CoverURL),
-			PlayURL:      util.EnsureHTTPPath(v.PlayURL),
+			CoverURL:     s.uploader.URL(v.CoverURL),
+			PlayURL:      s.uploader.URL(v.PlayURL),
 			CreatedAt:    v.CreatedAt,
 			LikeCount:    v.LikeCount,
 			CommentCount: v.CommentCount,

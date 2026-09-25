@@ -1,12 +1,12 @@
 package like
 
 import (
-	"simple_tiktok/internal/middleware"
-	"simple_tiktok/internal/pkg/type_convert"
-	"simple_tiktok/internal/platform/httpx"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+
+	"simple_tiktok/internal/platform/auth"
+	"simple_tiktok/internal/platform/httpx"
 )
 
 type HTTPHandler struct {
@@ -25,12 +25,8 @@ func (h *HTTPHandler) LikeVideo(c *gin.Context) {
 		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "视频 ID 不合法"))
 		return
 	}
-	userID, err := type_convert.AnyToUint64(c.MustGet(middleware.UserCtx))
-	if err != nil {
-		httpx.Fail(c, httpx.New(httpx.CodeUnauthorized, "登录状态无效，请重新登录"))
-		return
-	}
-	result, err := h.service.LikeVideo(targetID, userID)
+	userID := auth.UserID(c)
+	result, err := h.service.LikeVideo(c.Request.Context(), targetID, userID)
 	if err != nil {
 		httpx.Fail(c, err)
 		return
@@ -44,12 +40,8 @@ func (h *HTTPHandler) LikeComment(c *gin.Context) {
 		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "评论 ID 不合法"))
 		return
 	}
-	userID, err := type_convert.AnyToUint64(c.MustGet(middleware.UserCtx))
-	if err != nil {
-		httpx.Fail(c, httpx.New(httpx.CodeUnauthorized, "登录状态无效，请重新登录"))
-		return
-	}
-	result, err := h.service.LikeComment(commentID, userID)
+	userID := auth.UserID(c)
+	result, err := h.service.LikeComment(c.Request.Context(), commentID, userID)
 	if err != nil {
 		httpx.Fail(c, err)
 		return

@@ -4,16 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
+	"github.com/redis/go-redis/v9"
+	"gorm.io/gorm"
+
 	"simple_tiktok/internal/dto/req"
 	"simple_tiktok/internal/dto/res"
 	"simple_tiktok/internal/model"
 	"simple_tiktok/internal/pkg/constants"
-	"simple_tiktok/internal/pkg/util"
 	"simple_tiktok/internal/platform/httpx"
+	"simple_tiktok/internal/platform/upload"
 	"simple_tiktok/internal/service"
-
-	"github.com/redis/go-redis/v9"
-	"gorm.io/gorm"
 )
 
 type Service struct {
@@ -22,6 +23,7 @@ type Service struct {
 	userRepo    *UserRepo
 	redisClient *redis.Client
 	feedService *service.FeedService
+	uploader    *upload.Uploader
 }
 
 func NewService(
@@ -30,6 +32,7 @@ func NewService(
 	userRepo *UserRepo,
 	redisClient *redis.Client,
 	feedService *service.FeedService,
+	uploader *upload.Uploader,
 ) *Service {
 	return &Service{
 		commentRepo: commentRepo,
@@ -37,6 +40,7 @@ func NewService(
 		userRepo:    userRepo,
 		redisClient: redisClient,
 		feedService: feedService,
+		uploader:    uploader,
 	}
 }
 
@@ -138,7 +142,7 @@ func (s *Service) ListByVideoId(videoID uint64, userID uint64) ([]res.CommentRes
 					UserID:        user.ID,
 					Username:      user.Username,
 					Nickname:      user.NickName,
-					AvatarURL:     util.EnsureHTTPPath(user.AvatarURL),
+					AvatarURL:     s.uploader.URL(user.AvatarURL),
 					FollowCount:   user.FollowCount,
 					FollowerCount: user.FollowerCount,
 				}

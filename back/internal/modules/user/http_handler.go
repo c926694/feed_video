@@ -2,11 +2,12 @@ package user
 
 import (
 	"mime/multipart"
-	"simple_tiktok/internal/dto/req"
-	"simple_tiktok/internal/middleware"
-	"simple_tiktok/internal/platform/httpx"
 
 	"github.com/gin-gonic/gin"
+
+	"simple_tiktok/internal/dto/req"
+	"simple_tiktok/internal/platform/auth"
+	"simple_tiktok/internal/platform/httpx"
 )
 
 type HTTPHandler struct {
@@ -25,7 +26,7 @@ func (h *HTTPHandler) Register(c *gin.Context) {
 		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "请求参数格式错误"))
 		return
 	}
-	userID, err := h.service.Register(c, registerReq)
+	userID, err := h.service.Register(c.Request.Context(), registerReq)
 	if err != nil {
 		httpx.Fail(c, err)
 		return
@@ -39,7 +40,7 @@ func (h *HTTPHandler) Login(c *gin.Context) {
 		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "请求参数格式错误"))
 		return
 	}
-	token, err := h.service.Login(loginReq.Username, loginReq.Password)
+	token, err := h.service.Login(c.Request.Context(), loginReq.Username, loginReq.Password)
 	if err != nil {
 		httpx.Fail(c, err)
 		return
@@ -48,8 +49,7 @@ func (h *HTTPHandler) Login(c *gin.Context) {
 }
 
 func (h *HTTPHandler) GetUserInfo(c *gin.Context) {
-	userID := c.MustGet(middleware.UserCtx).(uint64)
-	userInfoRes, err := h.service.GetUserInfo(userID)
+	userInfoRes, err := h.service.GetUserInfo(auth.UserID(c))
 	if err != nil {
 		httpx.Fail(c, err)
 		return
@@ -58,9 +58,7 @@ func (h *HTTPHandler) GetUserInfo(c *gin.Context) {
 }
 
 func (h *HTTPHandler) Logout(c *gin.Context) {
-	userID := c.MustGet(middleware.UserCtx).(uint64)
-	err := h.service.Logout(userID)
-	if err != nil {
+	if err := h.service.Logout(c.Request.Context(), auth.UserID(c)); err != nil {
 		httpx.Fail(c, err)
 		return
 	}
@@ -75,8 +73,7 @@ func (h *HTTPHandler) UpdateProfile(c *gin.Context) {
 	if err == nil {
 		avatar = file
 	}
-	userID := c.MustGet(middleware.UserCtx).(uint64)
-	userInfo, err := h.service.UpdateProfile(userID, profileReq.Nickname, avatar)
+	userInfo, err := h.service.UpdateProfile(auth.UserID(c), profileReq.Nickname, avatar)
 	if err != nil {
 		httpx.Fail(c, err)
 		return

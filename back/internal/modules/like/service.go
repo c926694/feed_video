@@ -2,21 +2,21 @@ package like
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
+	"strconv"
+
+	"github.com/redis/go-redis/v9"
+
 	"simple_tiktok/internal/dto/res"
 	"simple_tiktok/internal/mq/event"
 	"simple_tiktok/internal/pkg/constants"
-
-	"github.com/redis/go-redis/v9"
-	"github.com/segmentio/kafka-go"
+	"simple_tiktok/internal/platform/kafka"
 )
 
 type Service struct {
-	redisClient       *redis.Client
-	likeVideoWriter   *kafka.Writer
-	likeCommentWriter *kafka.Writer
+	redisClient *redis.Client
+	publisher   *kafka.Publisher
 }
 
 var switchLikeScript = redis.NewScript(`
@@ -28,87 +28,72 @@ redis.call("SADD", KEYS[1], ARGV[1])
 return 1
 `)
 
-func NewService(redisClient *redis.Client, likeVideoWriter *kafka.Writer, likeCommentWriter *kafka.Writer) *Service {
+func NewService(redisClient *redis.Client, publisher *kafka.Publisher) *Service {
 	return &Service{
-		redisClient:       redisClient,
-		likeVideoWriter:   likeVideoWriter,
-		likeCommentWriter: likeCommentWriter,
+		redisClient: redisClient,
+		publisher:   publisher,
 	}
 }
 
-func (s *Service) LikeVideo(targetID uint64, userID uint64) (res.LikeVideoRes, error) {
+func (s *Service) LikeVideo(ctx context.Context, targetID uint64, userID uint64) (res.LikeVideoRes, error) {
 	key := fmt.Sprintf(constants.LikeVideo, targetID)
-	liked, err := s.switchLike(context.Background(), key, userID)
+	liked, err := s.switchLike(ctx, key, userID)
 	if err != nil {
 		return res.LikeVideoRes{}, err
 	}
 
 	eventType := event.Dislike
 	rollback := func() error {
-		return s.redisClient.SAdd(context.Background(), key, userID).Err()
+		return s.redisClient.SAdd(ctx, key, userID).Err()
 	}
 	if liked {
 		eventType = event.Like
 		rollback = func() error {
-			return s.redisClient.SRem(context.Background(), key, userID).Err()
+			return s.redisClient.SRem(ctx, key, userID).Err()
 		}
 	}
 
-	msgData, err := s.getLikeVideoEventMsg(targetID, eventType)
-	if err != nil {
-		return res.LikeVideoRes{}, err
-	}
-
-	log.Printf("like switch video_id=%d user_id=%d liked=%t", targetID, userID, liked)
-	err = s.likeVideoWriter.WriteMessages(context.Background(), kafka.Message{
-		Key:   []byte(fmt.Sprintf("%d", targetID)),
-		Value: msgData,
+	err = s.publisher.Publish(ctx, kafka.TopicLikeVideo, strconv.FormatUint(targetID, 10), event.LikeVideoEvent{
+		VideoId:   targetID,
+		EventType: eventType,
 	})
 	if err != nil {
 		if rollbackErr := rollback(); rollbackErr != nil {
-			log.Printf("like publish failed and rollback failed video_id=%d user_id=%d err=%v rollback_err=%v", targetID, userID, err, rollbackErr)
+			slog.Error("点赞事件发布失败且状态回滚失败", "video_id", targetID, "user_id", userID, "error", err, "rollback_error", rollbackErr)
 		}
 		return res.LikeVideoRes{}, err
 	}
-
 	return res.LikeVideoRes{VideoId: targetID, IsLiked: liked}, nil
 }
 
-func (s *Service) LikeComment(commentID uint64, userID uint64) (res.LikeCommentRes, error) {
+func (s *Service) LikeComment(ctx context.Context, commentID uint64, userID uint64) (res.LikeCommentRes, error) {
 	key := fmt.Sprintf(constants.LikeComment, commentID)
-	liked, err := s.switchLike(context.Background(), key, userID)
+	liked, err := s.switchLike(ctx, key, userID)
 	if err != nil {
 		return res.LikeCommentRes{}, err
 	}
 
 	eventType := event.Dislike
 	rollback := func() error {
-		return s.redisClient.SAdd(context.Background(), key, userID).Err()
+		return s.redisClient.SAdd(ctx, key, userID).Err()
 	}
 	if liked {
 		eventType = event.Like
 		rollback = func() error {
-			return s.redisClient.SRem(context.Background(), key, userID).Err()
+			return s.redisClient.SRem(ctx, key, userID).Err()
 		}
 	}
 
-	msgData, err := s.getLikeCommentEventMsg(commentID, eventType)
-	if err != nil {
-		return res.LikeCommentRes{}, err
-	}
-
-	log.Printf("comment like switch comment_id=%d user_id=%d liked=%t", commentID, userID, liked)
-	err = s.likeCommentWriter.WriteMessages(context.Background(), kafka.Message{
-		Key:   []byte(fmt.Sprintf("%d", commentID)),
-		Value: msgData,
+	err = s.publisher.Publish(ctx, kafka.TopicLikeComment, strconv.FormatUint(commentID, 10), event.LikeCommentEvent{
+		CommentId: commentID,
+		EventType: eventType,
 	})
 	if err != nil {
 		if rollbackErr := rollback(); rollbackErr != nil {
-			log.Printf("comment like publish failed and rollback failed comment_id=%d user_id=%d err=%v rollback_err=%v", commentID, userID, err, rollbackErr)
+			slog.Error("评论点赞事件发布失败且状态回滚失败", "comment_id", commentID, "user_id", userID, "error", err, "rollback_error", rollbackErr)
 		}
 		return res.LikeCommentRes{}, err
 	}
-
 	return res.LikeCommentRes{CommentId: commentID, IsLiked: liked}, nil
 }
 
@@ -118,14 +103,4 @@ func (s *Service) switchLike(ctx context.Context, key string, userID uint64) (bo
 		return false, err
 	}
 	return result == 1, nil
-}
-
-func (s *Service) getLikeVideoEventMsg(videoID uint64, eventType string) ([]byte, error) {
-	e := event.LikeVideoEvent{VideoId: videoID, EventType: eventType}
-	return json.Marshal(e)
-}
-
-func (s *Service) getLikeCommentEventMsg(commentID uint64, eventType string) ([]byte, error) {
-	e := event.LikeCommentEvent{CommentId: commentID, EventType: eventType}
-	return json.Marshal(e)
 }

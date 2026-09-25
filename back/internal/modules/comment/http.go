@@ -1,7 +1,6 @@
 package comment
 
 import (
-	"simple_tiktok/internal/middleware"
 	"simple_tiktok/internal/service"
 	"simple_tiktok/internal/svc"
 
@@ -12,14 +11,14 @@ func RegisterHTTP(r *gin.Engine, ctx *svc.ServiceContext) (*gin.Engine, error) {
 	commentRepo := NewCommentRepo(ctx.DB)
 	videoRepo := NewVideoRepo(ctx.DB)
 	userRepo := NewUserRepo(ctx.DB)
-	feedService := service.NewFeedService(videoRepo, userRepo, ctx.Redis, ctx.KafkaBrokers)
-	commentService := NewService(commentRepo, videoRepo, userRepo, ctx.Redis, feedService)
+	feedService := service.NewFeedService(videoRepo, userRepo, ctx.Redis, ctx.Publisher, ctx.Upload)
+	commentService := NewService(commentRepo, videoRepo, userRepo, ctx.Redis, feedService, ctx.Upload)
 	httpHandler := NewHTTPHandler(commentService)
 	commentGroup := r.Group("comments")
 	{
-		commentGroup.POST("", middleware.JWTAuth(ctx.Redis), httpHandler.Create)
-		commentGroup.DELETE("/:id", middleware.JWTAuth(ctx.Redis), httpHandler.Delete)
-		commentGroup.GET("/list/:videoId", middleware.JWTAuth(ctx.Redis), httpHandler.List)
+		commentGroup.POST("", ctx.Auth.Middleware(), httpHandler.Create)
+		commentGroup.DELETE("/:id", ctx.Auth.Middleware(), httpHandler.Delete)
+		commentGroup.GET("/list/:videoId", ctx.Auth.Middleware(), httpHandler.List)
 	}
 	return r, nil
 }

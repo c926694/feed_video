@@ -3,37 +3,34 @@ package follow
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"errors"
+	"log/slog"
+
+	"gorm.io/gorm"
+
 	"simple_tiktok/internal/model"
-	"simple_tiktok/internal/modulekit"
 	"simple_tiktok/internal/mq/event"
-	consumer2 "simple_tiktok/internal/mq/kafka/consumer"
+	"simple_tiktok/internal/platform/kafka"
 	"simple_tiktok/internal/repository/mysql"
 	"simple_tiktok/internal/svc"
-
-	"github.com/segmentio/kafka-go"
-	"gorm.io/gorm"
 )
 
-func RegisterConsumers(registrar modulekit.ConsumerRegistrar, ctx *svc.ServiceContext) error {
+func RegisterConsumers(sub *kafka.Subscriber, ctx *svc.ServiceContext) error {
 	followRepo := mysql.NewFollowRepo(ctx.DB)
-	userRepo := mysql.NewUserRepo(ctx.DB)
-
-	followConsumer := consumer2.NewConsumer(ctx.KafkaBrokers, event.FollowTopic, "follow-group")
-
-	registrar.Add("follow.switch", func() error {
-		return followConsumer.Consume(context.Background(), func(ctx context.Context, msg kafka.Message) error {
-			return handleFollow(msg, followRepo, userRepo)
-		})
+	sub.Subscribe(kafka.TopicFollow, func(handlerCtx context.Context, payload []byte) error {
+		return handleFollow(handlerCtx, payload, followRepo)
 	})
 	return nil
 }
 
-func handleFollow(msg kafka.Message, followRepo *mysql.FollowRepo, userRepo *mysql.UserRepo) error {
+// handleFollow 消费关注事件，在一个事务里更新关注关系与双方的关注计数
+func handleFollow(ctx context.Context, payload []byte, followRepo *mysql.FollowRepo) error {
 	var followEvent event.FollowEvent
-	if err := json.Unmarshal(msg.Value, &followEvent); err != nil {
-		log.Println(err)
-		return err
+	if err := json.Unmarshal(payload, &followEvent); err != nil {
+		return kafka.Permanent(err)
+	}
+	if followEvent.Follower == 0 || followEvent.Following == 0 {
+		return kafka.Permanent(errors.New("关注事件里缺少用户 ID"))
 	}
 
 	follow := &model.Follow{Following: followEvent.Following, Follower: followEvent.Follower}
@@ -43,32 +40,40 @@ func handleFollow(msg kafka.Message, followRepo *mysql.FollowRepo, userRepo *mys
 	case event.Follow:
 		err = tx.Create(follow).Error
 		if err == nil {
-			err = tx.Model(&model.User{}).Where("id = ?", followEvent.Follower).Update("follow_count", gorm.Expr("follow_count + 1")).Error
+			err = tx.Model(&model.User{}).Where("id = ?", followEvent.Follower).
+				Update("follow_count", gorm.Expr("follow_count + 1")).Error
 		}
 		if err == nil {
-			err = tx.Model(&model.User{}).Where("id = ?", followEvent.Following).Update("follower_count", gorm.Expr("follower_count + 1")).Error
+			err = tx.Model(&model.User{}).Where("id = ?", followEvent.Following).
+				Update("follower_count", gorm.Expr("follower_count + 1")).Error
 		}
 	case event.Unfollow:
-		err = tx.Where("follower = ? and following = ?", followEvent.Follower, followEvent.Following).Delete(&model.Follow{}).Error
+		err = tx.Where("follower = ? and following = ?", followEvent.Follower, followEvent.Following).
+			Delete(&model.Follow{}).Error
 		if err == nil {
-			err = tx.Model(&model.User{}).Where("id = ?", followEvent.Follower).Update("follow_count", gorm.Expr("CASE WHEN follow_count > 0 THEN follow_count - 1 ELSE 0 END")).Error
+			err = tx.Model(&model.User{}).Where("id = ?", followEvent.Follower).
+				Update("follow_count", gorm.Expr("CASE WHEN follow_count > 0 THEN follow_count - 1 ELSE 0 END")).Error
 		}
 		if err == nil {
-			err = tx.Model(&model.User{}).Where("id = ?", followEvent.Following).Update("follower_count", gorm.Expr("CASE WHEN follower_count > 0 THEN follower_count - 1 ELSE 0 END")).Error
+			err = tx.Model(&model.User{}).Where("id = ?", followEvent.Following).
+				Update("follower_count", gorm.Expr("CASE WHEN follower_count > 0 THEN follower_count - 1 ELSE 0 END")).Error
 		}
 	default:
 		_ = tx.Rollback()
-		log.Printf("unsupported follow event type: %s", followEvent.EventType)
+		slog.Warn("不支持的关注事件类型", "event_type", followEvent.EventType)
 		return nil
 	}
 
 	if err != nil {
 		_ = tx.Rollback()
-		log.Println(err)
+		slog.Error("处理关注事件失败",
+			"follower", followEvent.Follower,
+			"following", followEvent.Following,
+			"error", err)
 		return err
 	}
 	if err = tx.Commit().Error; err != nil {
-		log.Println(err)
+		slog.Error("提交关注事务失败", "follower", followEvent.Follower, "following", followEvent.Following, "error", err)
 		return err
 	}
 	return nil

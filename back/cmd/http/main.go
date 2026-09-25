@@ -5,62 +5,97 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"os/signal"
-	"path/filepath"
-	initialize2 "simple_tiktok/internal/initialize"
+	"syscall"
+	"time"
+
+	"github.com/gin-gonic/gin"
+
+	"simple_tiktok/internal/model"
 	"simple_tiktok/internal/modules/comment"
 	"simple_tiktok/internal/modules/feed"
 	"simple_tiktok/internal/modules/follow"
 	"simple_tiktok/internal/modules/like"
 	"simple_tiktok/internal/modules/user"
 	"simple_tiktok/internal/modules/video"
+	"simple_tiktok/internal/platform/auth"
+	"simple_tiktok/internal/platform/config"
 	"simple_tiktok/internal/platform/httpx"
+	"simple_tiktok/internal/platform/kafka"
+	"simple_tiktok/internal/platform/mysql"
+	"simple_tiktok/internal/platform/redis"
+	"simple_tiktok/internal/platform/upload"
 	"simple_tiktok/internal/svc"
-	"syscall"
-	"time"
-
-	"github.com/gin-gonic/gin"
 )
 
 func main() {
 	runCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	cfg, err := initialize2.LoadConfig("config/config.yaml")
+	cfg, err := config.Load("config/config.yaml")
 	if err != nil {
-		log.Fatalf("load config failed: %v", err)
+		log.Fatalf("加载配置失败: %v", err)
 	}
 
-	if _, err = initialize2.InitMySQL(cfg.MySQL); err != nil {
-		log.Fatalf("init mysql failed: %v", err)
+	db, err := mysql.Connect(cfg.MySQL)
+	if err != nil {
+		log.Fatalf("连接 mysql 失败: %v", err)
 	}
-	defer initialize2.CloseMySQL()
+	defer func() {
+		if closeErr := mysql.Close(db); closeErr != nil {
+			log.Printf("关闭 mysql 失败: %v", closeErr)
+		}
+	}()
 
-	if _, err = initialize2.InitRedis(cfg.Redis); err != nil {
-		log.Fatalf("init redis failed: %v", err)
+	if err = mysql.Migrate(db,
+		&model.User{},
+		&model.Video{},
+		&model.Comment{},
+		&model.Follow{},
+	); err != nil {
+		log.Fatalf("建立表结构失败: %v", err)
 	}
-	defer initialize2.CloseRedis()
 
-	if _, err = initialize2.InitKafka(cfg.Kafka); err != nil {
-		log.Fatalf("init kafka failed: %v", err)
+	redisClient, err := redis.Connect(cfg.Redis)
+	if err != nil {
+		log.Fatalf("连接 redis 失败: %v", err)
 	}
-	defer initialize2.CloseKafka()
+	defer func() {
+		if closeErr := redis.Close(redisClient); closeErr != nil {
+			log.Printf("关闭 redis 失败: %v", closeErr)
+		}
+	}()
 
-	if err = initialize2.AutoMigrate(initialize2.DB); err != nil {
-		log.Fatalf("auto migrate failed: %v", err)
+	publisher, err := kafka.NewPublisher(cfg.Kafka.Brokers)
+	if err != nil {
+		log.Fatalf("初始化 kafka 失败: %v", err)
+	}
+	publisher.EnsureTopics(runCtx)
+	defer func() {
+		if closeErr := publisher.Close(); closeErr != nil {
+			log.Printf("关闭 kafka 生产者失败: %v", closeErr)
+		}
+	}()
+
+	authService, err := auth.New(cfg.JWT.Secret, cfg.JWT.ExpireHours, redisClient)
+	if err != nil {
+		log.Fatalf("初始化鉴权失败: %v", err)
 	}
 
-	if err = ensureUploadDirs(cfg.Upload.BasePath, cfg.Upload.AvatarDir, cfg.Upload.CoverDir, cfg.Upload.VideoDir); err != nil {
-		log.Fatalf("create upload directories failed: %v", err)
+	uploader, err := upload.New(cfg.Upload)
+	if err != nil {
+		log.Fatalf("初始化上传目录失败: %v", err)
 	}
 
 	gin.SetMode(cfg.Server.Mode)
 	ctx := &svc.ServiceContext{
-		DB:           initialize2.DB,
-		Redis:        initialize2.RedisClient,
-		KafkaBrokers: cfg.Kafka.Brokers,
+		DB:        db,
+		Redis:     redisClient,
+		Publisher: publisher,
+		Auth:      authService,
+		Upload:    uploader,
 	}
+
 	r := gin.Default()
 	r.HandleMethodNotAllowed = true
 	r.NoRoute(func(c *gin.Context) {
@@ -69,31 +104,33 @@ func main() {
 	r.NoMethod(func(c *gin.Context) {
 		httpx.Fail(c, httpx.New(httpx.CodeMethodNotAllowed, "请求方法不允许"))
 	})
-	if _, err := user.RegisterHTTP(r, ctx); err != nil {
-		log.Fatalf("register user routes failed: %v", err)
+	if _, err = user.RegisterHTTP(r, ctx); err != nil {
+		log.Fatalf("注册 user 路由失败: %v", err)
 	}
-	if _, err := video.RegisterHTTP(r, ctx); err != nil {
-		log.Fatalf("register video routes failed: %v", err)
+	if _, err = video.RegisterHTTP(r, ctx); err != nil {
+		log.Fatalf("注册 video 路由失败: %v", err)
 	}
-	if _, err := comment.RegisterHTTP(r, ctx); err != nil {
-		log.Fatalf("register comment routes failed: %v", err)
+	if _, err = comment.RegisterHTTP(r, ctx); err != nil {
+		log.Fatalf("注册 comment 路由失败: %v", err)
 	}
-	if _, err := like.RegisterHTTP(r, ctx); err != nil {
-		log.Fatalf("register like routes failed: %v", err)
+	if _, err = like.RegisterHTTP(r, ctx); err != nil {
+		log.Fatalf("注册 like 路由失败: %v", err)
 	}
-	if _, err := follow.RegisterHTTP(r, ctx); err != nil {
-		log.Fatalf("register follow routes failed: %v", err)
+	if _, err = follow.RegisterHTTP(r, ctx); err != nil {
+		log.Fatalf("注册 follow 路由失败: %v", err)
 	}
-	if _, err := feed.RegisterHTTP(r, ctx); err != nil {
-		log.Fatalf("register feed routes failed: %v", err)
+	if _, err = feed.RegisterHTTP(r, ctx); err != nil {
+		log.Fatalf("注册 feed 路由失败: %v", err)
 	}
 
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
 	log.Println("监听端口:", addr)
 
 	server := &http.Server{
-		Addr:    addr,
-		Handler: r,
+		Addr:         addr,
+		Handler:      r,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 120 * time.Second,
 	}
 
 	go func() {
@@ -102,21 +139,11 @@ func main() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if shutdownErr := server.Shutdown(shutdownCtx); shutdownErr != nil {
-			log.Printf("shutdown http failed: %v", shutdownErr)
+			log.Printf("关闭 http 服务失败: %v", shutdownErr)
 		}
 	}()
 
 	if err = server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("start http failed: %v", err)
+		log.Fatalf("启动 http 服务失败: %v", err)
 	}
-}
-
-func ensureUploadDirs(basePath string, dirs ...string) error {
-	for _, dir := range dirs {
-		target := filepath.Join(basePath, dir)
-		if err := os.MkdirAll(target, 0o755); err != nil {
-			return err
-		}
-	}
-	return nil
 }
