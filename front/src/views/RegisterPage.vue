@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <section class="auth-page">
     <form class="panel" @submit.prevent="handleRegister">
       <h1>创建账号</h1>
@@ -47,9 +47,8 @@ async function handleRegister() {
     await registerUser(form);
     showToast("注册成功");
     router.push("/login");
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : "注册失败";
-    showToast(msg);
+  } catch {
+    // 错误提示已由 http 拦截器统一弹出
   } finally {
     loading.value = false;
   }

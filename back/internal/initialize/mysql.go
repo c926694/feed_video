@@ -25,6 +25,8 @@ func InitMySQL(cfg MySQLConfig) (*gorm.DB, error) {
 	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
 		Logger:                                   logger.Default.LogMode(logger.Info),
 		DisableForeignKeyConstraintWhenMigrating: true,
+		// 把驱动的错误码翻译成 gorm 的通用错误，便于用 errors.Is 判定重复键等情况
+		TranslateError: true,
 		NamingStrategy: schema.NamingStrategy{
 			SingularTable: true,
 		},

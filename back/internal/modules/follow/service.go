@@ -3,12 +3,12 @@ package follow
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"simple_tiktok/internal/dto/res"
 	"simple_tiktok/internal/mq/event"
 	"simple_tiktok/internal/pkg/constants"
+	"simple_tiktok/internal/platform/httpx"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/segmentio/kafka-go"
@@ -37,7 +37,7 @@ func NewService(redisClient *redis.Client, followWriter *kafka.Writer) *Service 
 
 func (s *Service) Follow(targetUserID uint64, currentUserID uint64) (res.FollowRes, error) {
 	if targetUserID == currentUserID {
-		return res.FollowRes{}, errors.New("cannot follow yourself")
+		return res.FollowRes{}, httpx.New(httpx.CodeBadRequest, "不能关注自己")
 	}
 	key := fmt.Sprintf(constants.FollowKey, currentUserID)
 	followed, err := s.switchFollow(context.Background(), key, targetUserID)

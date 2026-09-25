@@ -1,8 +1,6 @@
 export interface ApiEnvelope<T = unknown> {
-  success?: boolean;
   code?: number;
   msg?: string;
-  message?: string;
   data?: T;
   [key: string]: unknown;
 }

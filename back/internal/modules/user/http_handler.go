@@ -1,15 +1,12 @@
 package user
 
 import (
-	"errors"
 	"mime/multipart"
-	"net/http"
 	"simple_tiktok/internal/dto/req"
 	"simple_tiktok/internal/middleware"
-	"simple_tiktok/internal/pkg/response"
+	"simple_tiktok/internal/platform/httpx"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 )
 
 type HTTPHandler struct {
@@ -25,53 +22,49 @@ func NewHTTPHandler(userService *Service) *HTTPHandler {
 func (h *HTTPHandler) Register(c *gin.Context) {
 	var registerReq req.RegisterReq
 	if err := c.ShouldBind(&registerReq); err != nil {
-		response.Fail(c, http.StatusBadRequest, err.Error())
+		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "请求参数格式错误"))
 		return
 	}
 	userID, err := h.service.Register(c, registerReq)
 	if err != nil {
-		if errors.Is(err, gorm.ErrDuplicatedKey) {
-			response.Fail(c, http.StatusConflict, errors.New("user already exists").Error())
-			return
-		}
-		response.Fail(c, http.StatusInternalServerError, "注册失败")
+		httpx.Fail(c, err)
 		return
 	}
-	response.OK(c, userID)
+	httpx.OK(c, userID)
 }
 
 func (h *HTTPHandler) Login(c *gin.Context) {
 	var loginReq req.LoginReq
 	if err := c.ShouldBind(&loginReq); err != nil {
-		response.Fail(c, http.StatusBadRequest, err.Error())
+		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "请求参数格式错误"))
 		return
 	}
 	token, err := h.service.Login(loginReq.Username, loginReq.Password)
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, err.Error())
+		httpx.Fail(c, err)
 		return
 	}
-	response.OK(c, token)
+	httpx.OK(c, token)
 }
 
 func (h *HTTPHandler) GetUserInfo(c *gin.Context) {
 	userID := c.MustGet(middleware.UserCtx).(uint64)
 	userInfoRes, err := h.service.GetUserInfo(userID)
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, "获取个人信息失败")
+		httpx.Fail(c, err)
 		return
 	}
-	response.OK(c, userInfoRes)
+	httpx.OK(c, userInfoRes)
 }
 
 func (h *HTTPHandler) Logout(c *gin.Context) {
 	userID := c.MustGet(middleware.UserCtx).(uint64)
 	err := h.service.Logout(userID)
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, "退出失败")
+		httpx.Fail(c, err)
 		return
 	}
-	response.OK(c, nil)
+	httpx.OK(c, nil)
 }
 
 func (h *HTTPHandler) UpdateProfile(c *gin.Context) {
@@ -85,8 +78,8 @@ func (h *HTTPHandler) UpdateProfile(c *gin.Context) {
 	userID := c.MustGet(middleware.UserCtx).(uint64)
 	userInfo, err := h.service.UpdateProfile(userID, profileReq.Nickname, avatar)
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, err.Error())
+		httpx.Fail(c, err)
 		return
 	}
-	response.OK(c, userInfo)
+	httpx.OK(c, userInfo)
 }

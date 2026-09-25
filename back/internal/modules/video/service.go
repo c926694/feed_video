@@ -13,6 +13,7 @@ import (
 	"simple_tiktok/internal/pkg/constants"
 	"simple_tiktok/internal/pkg/upload"
 	"simple_tiktok/internal/pkg/util"
+	"simple_tiktok/internal/platform/httpx"
 	"simple_tiktok/internal/service"
 	"strconv"
 	"strings"
@@ -173,7 +174,7 @@ func (s *Service) GetVideoInfo(videoID uint64, userID uint64) (res.VideoInfoRes,
 		return res.VideoInfoRes{}, err
 	}
 	if !exists {
-		return res.VideoInfoRes{}, gorm.ErrRecordNotFound
+		return res.VideoInfoRes{}, httpx.New(httpx.CodeNotFound, "视频不存在")
 	}
 	videoInfoList := []res.VideoInfoRes{videoInfo}
 	if err = s.fillVideoLikeStatus(videoInfoList, userID); err != nil {
@@ -189,11 +190,14 @@ func (s *Service) DeleteVideo(videoID uint64, userID uint64) error {
 	tx := s.videoRepo.DB().Begin()
 	video, err := s.videoRepo.GetVideoById(videoID)
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return httpx.New(httpx.CodeNotFound, "视频不存在")
+		}
 		return err
 	}
 	if video.AuthorID != userID {
 		_ = tx.Rollback()
-		return errors.New("no permission to delete this video")
+		return httpx.New(httpx.CodeForbidden, "只能删除自己发布的视频")
 	}
 
 	commentRepo := s.commentRepo.WithTx(tx)

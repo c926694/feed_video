@@ -15,6 +15,7 @@ import (
 	"simple_tiktok/internal/modules/like"
 	"simple_tiktok/internal/modules/user"
 	"simple_tiktok/internal/modules/video"
+	"simple_tiktok/internal/platform/httpx"
 	"simple_tiktok/internal/svc"
 	"syscall"
 	"time"
@@ -61,6 +62,13 @@ func main() {
 		KafkaBrokers: cfg.Kafka.Brokers,
 	}
 	r := gin.Default()
+	r.HandleMethodNotAllowed = true
+	r.NoRoute(func(c *gin.Context) {
+		httpx.Fail(c, httpx.New(httpx.CodeNotFound, "接口不存在"))
+	})
+	r.NoMethod(func(c *gin.Context) {
+		httpx.Fail(c, httpx.New(httpx.CodeMethodNotAllowed, "请求方法不允许"))
+	})
 	if _, err := user.RegisterHTTP(r, ctx); err != nil {
 		log.Fatalf("register user routes failed: %v", err)
 	}

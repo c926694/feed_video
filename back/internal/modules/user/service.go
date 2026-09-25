@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"mime/multipart"
 	"simple_tiktok/internal/dto/req"
 	"simple_tiktok/internal/dto/res"
@@ -15,6 +14,7 @@ import (
 	"simple_tiktok/internal/pkg/jwt"
 	"simple_tiktok/internal/pkg/upload"
 	"simple_tiktok/internal/pkg/util"
+	"simple_tiktok/internal/platform/httpx"
 	"strings"
 	"time"
 
@@ -38,7 +38,7 @@ func NewService(userRepo *UserRepo, videoRepo *VideoRepo, redisClient *redis.Cli
 
 func (s *Service) Register(ctx context.Context, registerReq req.RegisterReq) (uint64, error) {
 	if registerReq.Password != registerReq.RePassword {
-		return 0, errors.New("两次密码不一致")
+		return 0, httpx.New(httpx.CodeBadRequest, "两次输入的密码不一致")
 	}
 	err := checkValidUsernameAndPassword(registerReq.Username, registerReq.Password)
 	if err != nil {
@@ -52,7 +52,7 @@ func (s *Service) Register(ctx context.Context, registerReq req.RegisterReq) (ui
 	user, err := s.userRepo.CreateUser(registerReq.Username, hashPassword, constants.DefaultAvatar)
 	if err != nil {
 		if errors.Is(err, gorm.ErrDuplicatedKey) {
-			return 0, errors.New("当前用户已注册")
+			return 0, httpx.New(httpx.CodeConflict, "用户名已存在")
 		}
 		return 0, err
 	}
@@ -61,20 +61,19 @@ func (s *Service) Register(ctx context.Context, registerReq req.RegisterReq) (ui
 
 func (s *Service) Login(username string, password string) (string, error) {
 	err := checkValidUsernameAndPassword(username, password)
-	log.Printf("username = %s ,pasword = %s", username, password)
 	if err != nil {
-		return "", errors.New("无效的用户名密码")
+		return "", err
 	}
 	user, err := s.userRepo.GetUserByUserNameAndPassword(username)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return "", errors.New("用户未注册")
+			return "", httpx.New(httpx.CodeCredential, "用户名或密码错误")
 		}
 		return "", err
 	}
 	right := hash_password.CheckPassword(password, user.Password)
 	if !right {
-		return "", errors.New("用户名或密码错误")
+		return "", httpx.New(httpx.CodeCredential, "用户名或密码错误")
 	}
 	token, err := jwt.GenerateToken(user.ID, user.NickName)
 	if err != nil {
@@ -93,6 +92,9 @@ func (s *Service) Login(username string, password string) (string, error) {
 func (s *Service) GetUserInfo(userID uint64) (*res.UserInfoRes, error) {
 	user, err := s.userRepo.GetUserByID(userID)
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, httpx.New(httpx.CodeNotFound, "用户不存在")
+		}
 		return nil, err
 	}
 	videoCount, err := s.videoRepo.CountByAuthorID(userID)
@@ -113,6 +115,9 @@ func (s *Service) GetUserInfo(userID uint64) (*res.UserInfoRes, error) {
 func (s *Service) UpdateProfile(userID uint64, nickname string, avatar *multipart.FileHeader) (*res.UserInfoRes, error) {
 	user, err := s.userRepo.GetUserByID(userID)
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, httpx.New(httpx.CodeNotFound, "用户不存在")
+		}
 		return nil, err
 	}
 
@@ -161,10 +166,10 @@ func (s *Service) Logout(userID uint64) error {
 
 func checkValidUsernameAndPassword(username string, password string) error {
 	if username == "" {
-		return errors.New("username is empty")
+		return httpx.New(httpx.CodeBadRequest, "用户名不能为空")
 	}
 	if password == "" {
-		return errors.New("hash_password is empty")
+		return httpx.New(httpx.CodeBadRequest, "密码不能为空")
 	}
 	return nil
 }

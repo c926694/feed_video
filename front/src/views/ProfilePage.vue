@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <section class="profile-page">
     <header class="top-bar">
       <h1>我的</h1>
@@ -64,7 +64,7 @@ async function bootstrap() {
       form.value.nickname = currentUser.value.nickname;
     }
   } catch {
-    showToast("加载个人页失败");
+    // 错误提示已由 http 拦截器统一弹出
   }
 }
 
@@ -116,7 +116,7 @@ async function onSaveProfile() {
     resetEditState();
     showToast("资料已更新");
   } catch {
-    showToast("更新资料失败");
+    // 错误提示已由 http 拦截器统一弹出
   } finally {
     saving.value = false;
   }
@@ -125,9 +125,11 @@ async function onSaveProfile() {
 async function onLogout() {
   try {
     await logout();
+    showToast("已退出登录");
+  } catch {
+    // 错误提示已由 http 拦截器统一弹出
   } finally {
     clearAuth();
-    showToast("已退出登录");
     router.push("/login");
   }
 }

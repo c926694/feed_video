@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <form class="panel" @submit.prevent="handleSubmit">
     <h1>Feed Video</h1>
     <p class="sub">沉浸式短视频体验，从登录开始。</p>
@@ -43,14 +43,14 @@ async function handleSubmit() {
   try {
     const result = await login(form);
     if (!result.token) {
-      throw new Error("登录成功但未拿到 token，请检查后端返回字段。");
+      showToast("登录成功但未拿到 token，请检查后端返回字段。");
+      return;
     }
     setAuthToken(result.token);
     showToast("登录成功");
     router.push("/feed");
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : "登录失败";
-    showToast(msg);
+  } catch {
+    // 错误提示已由 http 拦截器统一弹出
   } finally {
     loading.value = false;
   }

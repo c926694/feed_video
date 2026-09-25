@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <section class="profile-video-page">
     <button class="back-btn" @click="goBack">←</button>
 
@@ -132,7 +132,7 @@ async function onDeleteVideo(videoId: number) {
     scrollToActive();
     showToast("视频已删除");
   } catch {
-    showToast("删除失败");
+    // 错误提示已由 http 拦截器统一弹出
   } finally {
     deletingVideoId.value = 0;
   }

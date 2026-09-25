@@ -3,10 +3,9 @@ package middleware
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"simple_tiktok/internal/initialize"
 	"simple_tiktok/internal/pkg/jwt"
-	"simple_tiktok/internal/pkg/response"
+	"simple_tiktok/internal/platform/httpx"
 	"strings"
 	"time"
 
@@ -28,21 +27,21 @@ func JWTAuth(redisClient *redis.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := strings.TrimSpace(c.GetHeader("Authorization"))
 		if authHeader == "" {
-			response.Fail(c, http.StatusUnauthorized, "missing authorization header")
+			httpx.Fail(c, httpx.New(httpx.CodeUnauthorized, "请先登录"))
 			c.Abort()
 			return
 		}
 
 		parts := strings.SplitN(authHeader, " ", 2)
 		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-			response.Fail(c, http.StatusUnauthorized, "invalid authorization format")
+			httpx.Fail(c, httpx.New(httpx.CodeUnauthorized, "登录状态无效，请重新登录"))
 			c.Abort()
 			return
 		}
 
 		claims, err := jwt.ParseToken(parts[1])
 		if err != nil {
-			response.Fail(c, http.StatusUnauthorized, "invalid token")
+			httpx.Fail(c, httpx.New(httpx.CodeUnauthorized, "登录状态无效，请重新登录"))
 			c.Abort()
 			return
 		}
@@ -52,15 +51,16 @@ func JWTAuth(redisClient *redis.Client) gin.HandlerFunc {
 		ctx := context.Background()
 		token, err := redisClient.Get(ctx, key).Result()
 		if err != nil {
-			response.Fail(c, http.StatusUnauthorized, "redis无token")
+			httpx.Fail(c, httpx.New(httpx.CodeUnauthorized, "登录已失效，请重新登录"))
 			c.Abort()
+			return
 		}
 		//刷新token
 		expire := initialize.AppConfig.JWT.ExpireHours
-		_, err = redisClient.Set(ctx, key, token, time.Duration(expire)*time.Hour).Result()
-		if err != nil {
-			response.Fail(c, http.StatusUnauthorized, "设置token失败")
+		if _, err = redisClient.Set(ctx, key, token, time.Duration(expire)*time.Hour).Result(); err != nil {
+			httpx.Fail(c, err)
 			c.Abort()
+			return
 		}
 		c.Set(UserCtx, userId)
 		c.Set(UserNickName, nickName)

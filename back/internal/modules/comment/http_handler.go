@@ -1,11 +1,10 @@
 package comment
 
 import (
-	"net/http"
 	"simple_tiktok/internal/dto/req"
 	"simple_tiktok/internal/middleware"
-	"simple_tiktok/internal/pkg/response"
 	"simple_tiktok/internal/pkg/type_convert"
+	"simple_tiktok/internal/platform/httpx"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -24,56 +23,56 @@ func NewHTTPHandler(commentService *Service) *HTTPHandler {
 func (h *HTTPHandler) Create(c *gin.Context) {
 	var commentReq req.CommentReq
 	if err := c.ShouldBind(&commentReq); err != nil {
-		response.Fail(c, http.StatusBadRequest, err.Error())
+		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "请求参数格式错误"))
 		return
 	}
 	userID, err := type_convert.AnyToUint64(c.MustGet(middleware.UserCtx))
 	if err != nil {
-		response.Fail(c, http.StatusBadRequest, err.Error())
+		httpx.Fail(c, httpx.New(httpx.CodeUnauthorized, "登录状态无效，请重新登录"))
 		return
 	}
 	commentRes, err := h.service.CreateComment(userID, commentReq)
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, err.Error())
+		httpx.Fail(c, err)
 		return
 	}
-	response.OK(c, commentRes)
+	httpx.OK(c, commentRes)
 }
 
 func (h *HTTPHandler) Delete(c *gin.Context) {
 	userID, err := type_convert.AnyToUint64(c.MustGet(middleware.UserCtx))
 	if err != nil {
-		response.Fail(c, http.StatusBadRequest, err.Error())
+		httpx.Fail(c, httpx.New(httpx.CodeUnauthorized, "登录状态无效，请重新登录"))
 		return
 	}
 	commentID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		response.Fail(c, http.StatusBadRequest, err.Error())
+		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "评论 ID 不合法"))
 		return
 	}
 	err = h.service.DeleteComment(userID, commentID)
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, err.Error())
+		httpx.Fail(c, err)
 		return
 	}
-	response.OK(c, nil)
+	httpx.OK(c, nil)
 }
 
 func (h *HTTPHandler) List(c *gin.Context) {
 	videoID, err := strconv.ParseUint(c.Param("videoId"), 10, 64)
 	if err != nil {
-		response.Fail(c, http.StatusBadRequest, err.Error())
+		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "视频 ID 不合法"))
 		return
 	}
 	userID, err := type_convert.AnyToUint64(c.MustGet(middleware.UserCtx))
 	if err != nil {
-		response.Fail(c, http.StatusBadRequest, err.Error())
+		httpx.Fail(c, httpx.New(httpx.CodeUnauthorized, "登录状态无效，请重新登录"))
 		return
 	}
 	commentList, err := h.service.ListByVideoId(videoID, userID)
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, err.Error())
+		httpx.Fail(c, err)
 		return
 	}
-	response.OK(c, commentList)
+	httpx.OK(c, commentList)
 }

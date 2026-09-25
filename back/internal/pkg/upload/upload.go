@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"simple_tiktok/internal/pkg/constants"
+	"simple_tiktok/internal/platform/httpx"
 	"strings"
 	"time"
 )
@@ -42,7 +43,7 @@ func UploadFile(file *multipart.FileHeader, sourceType SourceType) (string, erro
 	// 校验后缀
 	ext := strings.ToLower(filepath.Ext(file.Filename))
 	if _, ok := allowExt[ext]; !ok {
-		return "", errors.New("file type not allowed")
+		return "", httpx.New(httpx.CodeBadRequest, "文件类型不支持")
 	}
 
 	// 生成唯一文件名

@@ -9,9 +9,11 @@ import (
 	"simple_tiktok/internal/model"
 	"simple_tiktok/internal/pkg/constants"
 	"simple_tiktok/internal/pkg/util"
+	"simple_tiktok/internal/platform/httpx"
 	"simple_tiktok/internal/service"
 
 	"github.com/redis/go-redis/v9"
+	"gorm.io/gorm"
 )
 
 type Service struct {
@@ -83,10 +85,13 @@ func (s *Service) CreateComment(userID uint64, commentReq req.CommentReq) (res.C
 func (s *Service) DeleteComment(userID uint64, commentID uint64) error {
 	comment, err := s.commentRepo.GetById(commentID)
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return httpx.New(httpx.CodeNotFound, "评论不存在")
+		}
 		return err
 	}
 	if comment.Commenter != userID {
-		return errors.New("无法删除他人评论")
+		return httpx.New(httpx.CodeForbidden, "只能删除自己的评论")
 	}
 	tx := s.commentRepo.DB().Begin()
 	if tx.Error != nil {
