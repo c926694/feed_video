@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/sync/errgroup"
 
@@ -112,6 +113,16 @@ func main() {
 
 	gin.SetMode(cfg.Server.Mode)
 	r := gin.Default()
+	// 允许前端开发服务器跨域访问
+	r.Use(cors.New(cors.Config{
+		AllowOrigins:     cfg.Server.AllowOrigins,
+		AllowWildcard:    true,
+		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization"},
+		ExposeHeaders:    []string{"Content-Length"},
+		AllowCredentials: true,
+		MaxAge:           12 * time.Hour,
+	}))
 	r.HandleMethodNotAllowed = true
 	r.NoRoute(func(c *gin.Context) {
 		httpx.Fail(c, httpx.New(httpx.CodeNotFound, "接口不存在"))

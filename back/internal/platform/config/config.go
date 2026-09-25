@@ -12,7 +12,6 @@ const (
 	defaultMaxIdleConns    = 10
 	defaultConnMaxLifetime = 60
 	defaultGroupID         = "feed_video"
-	defaultURLPrefix       = "/static/"
 )
 
 type Config struct {
@@ -27,6 +26,8 @@ type Config struct {
 type ServerConfig struct {
 	Port int    `mapstructure:"port"`
 	Mode string `mapstructure:"mode"`
+	// AllowOrigins 允许跨域访问的来源，支持通配符，例如 http://localhost:*
+	AllowOrigins []string `mapstructure:"allow_origins"`
 }
 
 type MySQLConfig struct {
@@ -59,11 +60,22 @@ type JWTConfig struct {
 }
 
 type UploadConfig struct {
-	BasePath  string `mapstructure:"base_path"`
-	AvatarDir string `mapstructure:"avatar_dir"`
-	CoverDir  string `mapstructure:"cover_dir"`
-	VideoDir  string `mapstructure:"video_dir"`
-	URLPrefix string `mapstructure:"url_prefix"`
+	AvatarDir string    `mapstructure:"avatar_dir"`
+	CoverDir  string    `mapstructure:"cover_dir"`
+	VideoDir  string    `mapstructure:"video_dir"`
+	OSS       OSSConfig `mapstructure:"oss"`
+}
+
+// OSSConfig 阿里云 OSS 的连接参数
+type OSSConfig struct {
+	Endpoint        string `mapstructure:"endpoint"`
+	AccessKeyID     string `mapstructure:"access_key_id"`
+	AccessKeySecret string `mapstructure:"access_key_secret"`
+	Bucket          string `mapstructure:"bucket"`
+	// Prefix 是 bucket 内的统一前缀，留空表示放在根目录
+	Prefix string `mapstructure:"prefix"`
+	// CustomDomain 是绑定到 bucket 的访问域名，留空时用 bucket 与 endpoint 拼
+	CustomDomain string `mapstructure:"custom_domain"`
 }
 
 // Load 读取配置文件并补齐可以省略的项
@@ -82,6 +94,9 @@ func Load(path string) (*Config, error) {
 }
 
 func (c *Config) applyDefaults() {
+	if len(c.Server.AllowOrigins) == 0 {
+		c.Server.AllowOrigins = []string{"http://localhost:*", "http://127.0.0.1:*"}
+	}
 	if c.MySQL.MaxOpenConns <= 0 {
 		c.MySQL.MaxOpenConns = defaultMaxOpenConns
 	}
@@ -94,12 +109,6 @@ func (c *Config) applyDefaults() {
 	if c.Kafka.GroupID == "" {
 		c.Kafka.GroupID = defaultGroupID
 	}
-	if c.Upload.BasePath == "" {
-		c.Upload.BasePath = envOr("STORAGE_PATH", "storage")
-	}
-	if c.Upload.URLPrefix == "" {
-		c.Upload.URLPrefix = envOr("HTTP_PATH", defaultURLPrefix)
-	}
 	if c.Upload.AvatarDir == "" {
 		c.Upload.AvatarDir = "avatar"
 	}
@@ -109,11 +118,10 @@ func (c *Config) applyDefaults() {
 	if c.Upload.VideoDir == "" {
 		c.Upload.VideoDir = "video"
 	}
-}
-
-func envOr(key string, fallback string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
+	if c.Upload.OSS.AccessKeyID == "" {
+		c.Upload.OSS.AccessKeyID = os.Getenv("OSS_ACCESS_KEY_ID")
 	}
-	return fallback
+	if c.Upload.OSS.AccessKeySecret == "" {
+		c.Upload.OSS.AccessKeySecret = os.Getenv("OSS_ACCESS_KEY_SECRET")
+	}
 }

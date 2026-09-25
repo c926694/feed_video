@@ -1,6 +1,10 @@
 server:
   port: 8081
   mode: release
+  # 前端与后端不同源时在这里列出允许的来源，支持通配符
+  allow_origins:
+    - http://localhost:*
+    - http://127.0.0.1:*
 
 mysql:
   host: mysql
@@ -19,13 +23,21 @@ redis:
 kafka:
   brokers:
     - kafka:9092
+  group_id: feed_video
 
 jwt:
   secret: "a9f3kLm92Jd8sKqP0xZr7Tn4WbC6Yh1V"
   expire_hours: 72
 
 upload:
-  base_path: /app/storage
   avatar_dir: avatar
   cover_dir: cover
   video_dir: video
+  oss:
+    endpoint: oss-cn-beijing.aliyuncs.com
+    # 凭据由环境变量 OSS_ACCESS_KEY_ID 与 OSS_ACCESS_KEY_SECRET 注入，不要写进仓库
+    access_key_id: ""
+    access_key_secret: ""
+    bucket: feed-cp
+    prefix: ""
+    custom_domain: ""
