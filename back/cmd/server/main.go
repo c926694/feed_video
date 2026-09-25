@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -42,10 +44,15 @@ func main() {
 	runCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	cfg, err := config.Load("config/config.yaml")
+	resolvedPath, err := resolveConfigPath()
+	if err != nil {
+		log.Fatalf("定位配置文件失败: %v", err)
+	}
+	cfg, err := config.Load(resolvedPath)
 	if err != nil {
 		log.Fatalf("加载配置失败: %v", err)
 	}
+	log.Println("配置文件:", resolvedPath)
 
 	db, err := mysql.Connect(cfg.MySQL)
 	if err != nil {
@@ -71,7 +78,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("初始化 kafka 生产者失败: %v", err)
 	}
-	eventProducer.EnsureTopics(runCtx)
 
 	authService, err := auth.New(cfg.JWT.Secret, cfg.JWT.ExpireHours, redisClient)
 	if err != nil {
@@ -219,4 +225,29 @@ func main() {
 		log.Printf("关闭 kafka 生产者失败: %v", closeErr)
 	}
 	log.Println("服务已停止")
+}
+
+// resolveConfigPath 取当前工作目录的绝对路径，再从那里逐级向上查找配置文件。
+// 从 back、back/cmd/server 或容器里的 /app 启动都能找到同一份配置。
+func resolveConfigPath() (string, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("获取工作目录失败: %w", err)
+	}
+	dir, err = filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("获取绝对路径失败: %w", err)
+	}
+	for {
+		candidate := filepath.Join(dir, config.DefaultRelativePath)
+		if _, statErr := os.Stat(candidate); statErr == nil {
+			return candidate, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return "", fmt.Errorf("没有找到 %s", config.DefaultRelativePath)
 }
