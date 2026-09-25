@@ -4,31 +4,29 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 
-	"simple_tiktok/internal/mq/event"
-	"simple_tiktok/internal/platform/kafka"
+	videoevent "simple_tiktok/internal/modules/video/event"
+	"simple_tiktok/internal/platform/kafka/consumer"
 	"simple_tiktok/internal/platform/upload"
-	"simple_tiktok/internal/svc"
 )
 
-func RegisterConsumers(sub *kafka.Subscriber, ctx *svc.ServiceContext) error {
-	sub.Subscribe(kafka.TopicVideoDelete, func(handlerCtx context.Context, payload []byte) error {
-		return handleDeleteVideo(handlerCtx, payload, ctx.Upload)
-	})
-	return nil
-}
-
-// handleDeleteVideo 消费视频删除事件，删除存储目录里的视频与封面文件
-func handleDeleteVideo(ctx context.Context, payload []byte, uploader *upload.Uploader) error {
-	var deleteVideoEvent event.DeleteVideoEvent
-	if err := json.Unmarshal(payload, &deleteVideoEvent); err != nil {
-		return kafka.Permanent(err)
+// handleVideoDeleted 删除存储目录里的视频与封面文件
+func handleVideoDeleted(ctx context.Context, payload []byte, uploader *upload.Uploader) error {
+	var deleted videoevent.DeletedEvent
+	if err := json.Unmarshal(payload, &deleted); err != nil {
+		return consumer.Permanent(err)
 	}
-	if deleteVideoEvent.PlayURL == "" && deleteVideoEvent.CoverURL == "" {
-		return kafka.Permanent(errors.New("删除视频事件里没有文件路径"))
+	if deleted.PlayURL == "" && deleted.CoverURL == "" {
+		return consumer.Permanent(errors.New("删除视频事件里没有文件路径"))
 	}
-	if err := uploader.Delete(upload.Video, deleteVideoEvent.PlayURL); err != nil {
+	if err := uploader.Delete(upload.Video, deleted.PlayURL); err != nil {
+		slog.Error("删除视频文件失败", "play_url", deleted.PlayURL, "error", err)
 		return err
 	}
-	return uploader.Delete(upload.Cover, deleteVideoEvent.CoverURL)
+	if err := uploader.Delete(upload.Cover, deleted.CoverURL); err != nil {
+		slog.Error("删除封面文件失败", "cover_url", deleted.CoverURL, "error", err)
+		return err
+	}
+	return nil
 }

@@ -48,11 +48,6 @@ func Connect(cfg config.MySQLConfig) (*gorm.DB, error) {
 	return db, nil
 }
 
-// Migrate 建立或更新表结构
-func Migrate(db *gorm.DB, models ...any) error {
-	return db.AutoMigrate(models...)
-}
-
 // RunInTx 在一个事务里执行 fn，fn 返回错误时回滚
 func RunInTx(ctx context.Context, db *gorm.DB, fn func(tx *gorm.DB) error) error {
 	return db.WithContext(ctx).Transaction(fn)
