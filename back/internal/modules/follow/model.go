@@ -22,13 +22,6 @@ type Model struct {
 	producer *producer.Producer
 }
 
-func NewModel(followRepo *repo.Repo, eventProducer *producer.Producer) *Model {
-	return &Model{
-		repo:     followRepo,
-		producer: eventProducer,
-	}
-}
-
 func (m *Model) SwitchFollow(ctx context.Context, targetUserID uint64, currentUserID uint64) (bool, error) {
 	if targetUserID == currentUserID {
 		return false, httpx.New(httpx.CodeBadRequest, "不能关注自己")

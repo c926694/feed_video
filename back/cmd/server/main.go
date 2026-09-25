@@ -16,17 +16,11 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"simple_tiktok/internal/modules/comment"
-	commentrepo "simple_tiktok/internal/modules/comment/repo"
 	"simple_tiktok/internal/modules/feed"
-	feedrepo "simple_tiktok/internal/modules/feed/repo"
 	"simple_tiktok/internal/modules/follow"
-	followrepo "simple_tiktok/internal/modules/follow/repo"
 	"simple_tiktok/internal/modules/like"
-	likerepo "simple_tiktok/internal/modules/like/repo"
 	"simple_tiktok/internal/modules/user"
-	userrepo "simple_tiktok/internal/modules/user/repo"
 	"simple_tiktok/internal/modules/video"
-	videorepo "simple_tiktok/internal/modules/video/repo"
 	"simple_tiktok/internal/platform/auth"
 	"simple_tiktok/internal/platform/config"
 	"simple_tiktok/internal/platform/httpx"
@@ -94,21 +88,6 @@ func main() {
 		log.Fatalf("建立表结构失败: %v", err)
 	}
 
-	users := userrepo.New(db)
-	videos := videorepo.New(db, redisClient)
-	comments := commentrepo.New(db)
-	follows := followrepo.New(db, redisClient)
-	likes := likerepo.New(redisClient)
-	feeds := feedrepo.New(redisClient)
-
-	// 业务层，跨模块的数据访问直接依赖对方的 repo
-	userModel := user.NewModel(users, authService, uploader, eventProducer)
-	likeModel := like.NewModel(likes, eventProducer)
-	followModel := follow.NewModel(follows, eventProducer)
-	videoModel := video.NewModel(videos, users, likes, follows, eventProducer, uploader)
-	commentModel := comment.NewModel(comments, users, likes, eventProducer, uploader)
-	feedModel := feed.NewModel(feeds, videos, users, likes, follows, uploader)
-
 	serviceCtx := &svc.ServiceContext{
 		DB:       db,
 		Redis:    redisClient,
@@ -137,25 +116,14 @@ func main() {
 		httpx.Fail(c, httpx.New(httpx.CodeMethodNotAllowed, "请求方法不允许"))
 	})
 
+	// 模块自己在模块内部完成装配，这里只负责传入进程级的共享依赖
 	httpRegistrations := []func(*gin.Engine, *svc.ServiceContext) (*gin.Engine, error){
-		func(engine *gin.Engine, ctx *svc.ServiceContext) (*gin.Engine, error) {
-			return user.RegisterHTTP(engine, userModel, ctx)
-		},
-		func(engine *gin.Engine, ctx *svc.ServiceContext) (*gin.Engine, error) {
-			return like.RegisterHTTP(engine, likeModel, ctx)
-		},
-		func(engine *gin.Engine, ctx *svc.ServiceContext) (*gin.Engine, error) {
-			return follow.RegisterHTTP(engine, followModel, ctx)
-		},
-		func(engine *gin.Engine, ctx *svc.ServiceContext) (*gin.Engine, error) {
-			return video.RegisterHTTP(engine, videoModel, ctx)
-		},
-		func(engine *gin.Engine, ctx *svc.ServiceContext) (*gin.Engine, error) {
-			return comment.RegisterHTTP(engine, commentModel, ctx)
-		},
-		func(engine *gin.Engine, ctx *svc.ServiceContext) (*gin.Engine, error) {
-			return feed.RegisterHTTP(engine, feedModel, ctx)
-		},
+		user.RegisterHTTP,
+		like.RegisterHTTP,
+		follow.RegisterHTTP,
+		video.RegisterHTTP,
+		comment.RegisterHTTP,
+		feed.RegisterHTTP,
 	}
 	for _, register := range httpRegistrations {
 		if _, err = register(r, serviceCtx); err != nil {
@@ -163,30 +131,26 @@ func main() {
 		}
 	}
 
-	eventConsumer := consumer.New(cfg.Kafka.Brokers, cfg.Kafka.GroupID, eventProducer)
-	consumerRegistrations := []func(*consumer.Consumer, *svc.ServiceContext) error{
-		func(sub *consumer.Consumer, ctx *svc.ServiceContext) error {
-			return user.RegisterConsumers(sub, userModel, ctx)
-		},
-		func(sub *consumer.Consumer, ctx *svc.ServiceContext) error {
-			return follow.RegisterConsumers(sub, followModel, ctx)
-		},
-		func(sub *consumer.Consumer, ctx *svc.ServiceContext) error {
-			return video.RegisterConsumers(sub, videoModel, ctx)
-		},
-		func(sub *consumer.Consumer, ctx *svc.ServiceContext) error {
-			return comment.RegisterConsumers(sub, commentModel, ctx)
-		},
-		func(sub *consumer.Consumer, ctx *svc.ServiceContext) error {
-			return feed.RegisterConsumers(sub, feedModel, ctx)
-		},
+	// 每个模块一个消费者，组名里带上模块名。多个模块订阅同一个 topic 时，
+	// 分处不同的消费组，各自都能收到全部消息。
+	var consumers []*consumer.Consumer
+	consumerRegistrations := []struct {
+		subscriber string
+		register   func(*consumer.Consumer, *svc.ServiceContext) error
+	}{
+		{user.Name, user.RegisterConsumers},
+		{follow.Name, follow.RegisterConsumers},
+		{video.Name, video.RegisterConsumers},
+		{comment.Name, comment.RegisterConsumers},
+		{feed.Name, feed.RegisterConsumers},
 	}
-	for _, register := range consumerRegistrations {
-		if err = register(eventConsumer, serviceCtx); err != nil {
+	for _, item := range consumerRegistrations {
+		eventConsumer := consumer.New(cfg.Kafka.Brokers, cfg.Kafka.GroupID, item.subscriber, eventProducer)
+		if err = item.register(eventConsumer, serviceCtx); err != nil {
 			log.Fatalf("注册消费者失败: %v", err)
 		}
+		consumers = append(consumers, eventConsumer)
 	}
-
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
 	server := &http.Server{
 		Addr:         addr,
@@ -204,9 +168,12 @@ func main() {
 		}
 		return nil
 	})
-	g.Go(func() error {
-		return eventConsumer.Run(gctx)
-	})
+	for _, item := range consumers {
+		eventConsumer := item
+		g.Go(func() error {
+			return eventConsumer.Run(gctx)
+		})
+	}
 	g.Go(func() error {
 		<-gctx.Done()
 		log.Println("收到停止信号，正在关闭服务")

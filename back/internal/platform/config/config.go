@@ -7,6 +7,9 @@ import (
 	"github.com/spf13/viper"
 )
 
+// DefaultRelativePath 配置文件相对于项目根目录的位置
+const DefaultRelativePath = "config/config.yaml"
+
 const (
 	defaultMaxOpenConns    = 50
 	defaultMaxIdleConns    = 10

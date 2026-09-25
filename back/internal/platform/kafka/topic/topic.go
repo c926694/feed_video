@@ -13,14 +13,3 @@ const (
 
 // FailedSuffix 处理失败的消息转发到 "<topic>.failed"
 const FailedSuffix = ".failed"
-
-// All 启动时需要确保存在的 topic
-var All = []string{
-	VideoCreated,
-	VideoDeleted,
-	CommentCreated,
-	CommentDeleted,
-	LikeSwitched,
-	FollowSwitched,
-	UserUpdated,
-}

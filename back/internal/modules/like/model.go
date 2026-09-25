@@ -17,14 +17,6 @@ type Model struct {
 	repo     *repo.Repo
 	producer *producer.Producer
 }
-
-func NewModel(likeRepo *repo.Repo, eventProducer *producer.Producer) *Model {
-	return &Model{
-		repo:     likeRepo,
-		producer: eventProducer,
-	}
-}
-
 func (m *Model) SwitchVideoLike(ctx context.Context, videoID uint64, userID uint64) (bool, error) {
 	return m.switchLike(ctx, event.TargetVideo, videoID, userID)
 }

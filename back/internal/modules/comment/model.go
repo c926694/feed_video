@@ -32,22 +32,6 @@ type Model struct {
 	uploader *upload.Uploader
 }
 
-func NewModel(
-	comments *commentrepo.Repo,
-	users *userrepo.Repo,
-	likes *likerepo.Repo,
-	eventProducer *producer.Producer,
-	uploader *upload.Uploader,
-) *Model {
-	return &Model{
-		comments: comments,
-		users:    users,
-		likes:    likes,
-		producer: eventProducer,
-		uploader: uploader,
-	}
-}
-
 func (m *Model) Create(ctx context.Context, userID uint64, createReq CreateReq) (*InfoRes, error) {
 	if createReq.Content == "" {
 		return nil, httpx.New(httpx.CodeBadRequest, "评论内容不能为空")

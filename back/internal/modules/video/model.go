@@ -44,24 +44,6 @@ type Model struct {
 	uploader *upload.Uploader
 }
 
-func NewModel(
-	videos *videorepo.Repo,
-	users *userrepo.Repo,
-	likes *likerepo.Repo,
-	follows *followrepo.Repo,
-	eventProducer *producer.Producer,
-	uploader *upload.Uploader,
-) *Model {
-	return &Model{
-		videos:   videos,
-		users:    users,
-		likes:    likes,
-		follows:  follows,
-		producer: eventProducer,
-		uploader: uploader,
-	}
-}
-
 func (m *Model) CreateVideo(ctx context.Context, createReq CreateReq, userID uint64, nickName string) (CreateRes, error) {
 	authorName := strings.TrimSpace(nickName)
 	authorAvatar := ""

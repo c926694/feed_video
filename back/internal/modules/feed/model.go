@@ -36,24 +36,6 @@ type Model struct {
 	uploader *upload.Uploader
 }
 
-func NewModel(
-	feed *feedrepo.Repo,
-	videos *videorepo.Repo,
-	users *userrepo.Repo,
-	likes *likerepo.Repo,
-	follows *followrepo.Repo,
-	uploader *upload.Uploader,
-) *Model {
-	return &Model{
-		feed:     feed,
-		videos:   videos,
-		users:    users,
-		likes:    likes,
-		follows:  follows,
-		uploader: uploader,
-	}
-}
-
 // GetFeedVideos 按发布时间倒序取一页
 func (m *Model) GetFeedVideos(ctx context.Context, limit uint64, lastScore float64, userID uint64) ([]VideoItem, float64, error) {
 	ids, err := m.feed.FeedIDs(ctx, limit, lastScore)

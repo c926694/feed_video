@@ -3,6 +3,8 @@ package consumer
 import (
 	"context"
 	"log/slog"
+	"reflect"
+	"runtime"
 	"runtime/debug"
 	"time"
 
@@ -14,12 +16,12 @@ import (
 )
 
 const (
-	retryTimes      = 3
-	retryBackoff    = 300 * time.Millisecond
+	retryTimes       = 3
+	retryBackoff     = 300 * time.Millisecond
 	readRetryBackoff = time.Second
-	minBytes        = 1
-	maxBytes        = 10e6
-	maxWait         = 200 * time.Millisecond
+	minBytes         = 1
+	maxBytes         = 10e6
+	maxWait          = 200 * time.Millisecond
 )
 
 // Handler 处理一条消息，payload 是消息体的原始字节，由处理函数自己解码
@@ -30,21 +32,33 @@ type subscription struct {
 	handler Handler
 }
 
+// handlerName 取处理函数的完整名称，用于日志里区分同一个 topic 上的多个订阅
+func (s subscription) handlerName() string {
+	fn := runtime.FuncForPC(reflect.ValueOf(s.handler).Pointer())
+	if fn == nil {
+		return "未知处理函数"
+	}
+	return fn.Name()
+}
+
 // Consumer 事件消费者。负责读取消息、提交位点、失败重试、转发失败消息与 panic 恢复。
 // dlqProducer 只用于把处理失败的消息转发到 "<topic>.failed"。
 type Consumer struct {
 	brokers     []string
 	groupID     string
+	subscriber  string
 	dlqProducer *producer.Producer
 	entries     []subscription
 }
 
-// New 创建消费者。groupID 是消费者组前缀，每个 topic 会追加自己的名称，
-// 因此不同 topic 的位点互不影响。
-func New(brokers []string, groupID string, dlqProducer *producer.Producer) *Consumer {
+// New 创建消费者。groupID 是消费者组前缀，subscriber 是登记订阅的模块名。
+// 每个订阅使用 "前缀.模块名.topic" 作为组名，因此同一个模块可以订阅多个 topic，
+// 多个模块也可以订阅同一个 topic，各自都能收到全部消息。
+func New(brokers []string, groupID string, subscriber string, dlqProducer *producer.Producer) *Consumer {
 	return &Consumer{
 		brokers:     brokers,
 		groupID:     groupID,
+		subscriber:  subscriber,
 		dlqProducer: dlqProducer,
 	}
 }
@@ -67,7 +81,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 }
 
 func (c *Consumer) consume(ctx context.Context, entry subscription) error {
-	group := c.groupID + "." + entry.name
+	group := c.groupID + "." + c.subscriber + "." + entry.name
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:     c.brokers,
 		Topic:       entry.name,
@@ -129,6 +143,12 @@ func (c *Consumer) dispatch(ctx context.Context, entry subscription, msg kafka.M
 	for attempt := 0; attempt < retryTimes; attempt++ {
 		lastErr = entry.handler(ctx, msg.Value)
 		if lastErr == nil {
+			slog.Info("消息处理完成",
+				"topic", entry.name,
+				"handler", entry.handlerName(),
+				"partition", msg.Partition,
+				"offset", msg.Offset,
+				"attempt", attempt+1)
 			return
 		}
 		if IsPermanent(lastErr) {

@@ -32,15 +32,6 @@ type Model struct {
 	producer *producer.Producer
 }
 
-func NewModel(users *userrepo.Repo, authService *auth.Service, uploader *upload.Uploader, eventProducer *producer.Producer) *Model {
-	return &Model{
-		users:    users,
-		auth:     authService,
-		uploader: uploader,
-		producer: eventProducer,
-	}
-}
-
 func (m *Model) Register(ctx context.Context, registerReq RegisterReq) (uint64, error) {
 	if registerReq.Password != registerReq.RePassword {
 		return 0, httpx.New(httpx.CodeBadRequest, "两次输入的密码不一致")
