@@ -122,3 +122,8 @@ func (r *Repo) DeleteByTarget(ctx context.Context, targetType string, targetID u
 func (r *Repo) DeleteTargetSet(ctx context.Context, target string, targetID uint64) error {
 	return r.redisClient.Del(ctx, keyFor(target, targetID)).Err()
 }
+
+// CountLikes 返回某个目标的点赞用户数
+func (r *Repo) CountLikes(ctx context.Context, target string, targetID uint64) (int64, error) {
+	return r.redisClient.SCard(ctx, keyFor(target, targetID)).Result()
+}

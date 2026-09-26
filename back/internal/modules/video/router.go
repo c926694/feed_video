@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	commentrepo "simple_tiktok/internal/modules/comment/repo"
 	followrepo "simple_tiktok/internal/modules/follow/repo"
 	likerepo "simple_tiktok/internal/modules/like/repo"
 	userrepo "simple_tiktok/internal/modules/user/repo"
@@ -22,6 +23,7 @@ const Name = "video"
 func NewLogic(ctx *svc.ServiceContext) *Logic {
 	return &Logic{
 		videos:   videorepo.New(ctx.DB, ctx.Redis),
+		comments: commentrepo.New(ctx.DB),
 		users:    userrepo.New(ctx.DB),
 		likes:    likerepo.New(ctx.DB, ctx.Redis),
 		follows:  followrepo.New(ctx.DB, ctx.Redis),

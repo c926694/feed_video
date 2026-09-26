@@ -7,7 +7,6 @@ const (
 	AvatarPrefix             = "/avatar/"
 	CoverPrefix              = "/cover/"
 	VideoPrefix              = "/video/"
-	FeedVideoKey             = "feed:video"
 	HotFeedVideoKey          = "feed:hot:video"
 	HotFeedVideoMinutePrefix = "feed:hot:video:1m"
 	HotFeedVideoMergePrefix  = "feed:hot:video:merge"

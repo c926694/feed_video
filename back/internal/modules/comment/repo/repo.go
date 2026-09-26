@@ -57,14 +57,17 @@ func (r *Repo) DeleteByVideo(ctx context.Context, videoID uint64) error {
 	return r.db.WithContext(ctx).Where("video_id = ?", videoID).Delete(&Comment{}).Error
 }
 
-func (r *Repo) IncreaseLikeCount(ctx context.Context, commentID uint64) error {
-	return r.db.WithContext(ctx).Model(&Comment{}).Where("id = ?", commentID).
-		Update("like_count", gorm.Expr("like_count + 1")).Error
+// CountByVideo 统计某个视频下的评论数
+func (r *Repo) CountByVideo(ctx context.Context, videoID uint64) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&Comment{}).Where("video_id = ?", videoID).Count(&count).Error
+	return count, err
 }
 
-func (r *Repo) DecreaseLikeCount(ctx context.Context, commentID uint64) error {
+// SyncLikeCount 按实际点赞数对账评论点赞数
+func (r *Repo) SyncLikeCount(ctx context.Context, commentID uint64, count int64) error {
 	return r.db.WithContext(ctx).Model(&Comment{}).Where("id = ?", commentID).
-		Update("like_count", gorm.Expr("CASE WHEN like_count > 0 THEN like_count - 1 ELSE 0 END")).Error
+		Update("like_count", count).Error
 }
 
 // UpdateCommenterInfo 刷新某个评论者全部评论上冗余的展示字段

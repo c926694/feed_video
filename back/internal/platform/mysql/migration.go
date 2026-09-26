@@ -6,8 +6,9 @@ import (
 	"fmt"
 
 	"github.com/golang-migrate/migrate/v4"
-	migratemysql "github.com/golang-migrate/migrate/v4/database/mysql"
+	_ "github.com/golang-migrate/migrate/v4/database/mysql" // 注册 mysql 数据库驱动
 	"github.com/golang-migrate/migrate/v4/source/iofs"
+	gormmysql "gorm.io/driver/mysql"
 	"gorm.io/gorm"
 )
 
@@ -15,21 +16,18 @@ import (
 var migrationsFS embed.FS
 
 // Migrate 按版本执行 migrations 目录下的 SQL 迁移，每个迁移只执行一次，
-// 已执行的版本记录在 schema_migrations 表里。
+// 已执行的版本记录在 schema_migrations 表里。迁移使用独立连接，完成后关闭，
+// 不影响 gorm 的连接池。
 func Migrate(db *gorm.DB) error {
-	sqlDB, err := db.DB()
-	if err != nil {
-		return fmt.Errorf("获取底层连接失败: %w", err)
+	dialector, ok := db.Dialector.(*gormmysql.Dialector)
+	if !ok {
+		return errors.New("当前数据库方言不是 mysql")
 	}
 	sourceDriver, err := iofs.New(migrationsFS, "migrations")
 	if err != nil {
 		return fmt.Errorf("加载迁移文件失败: %w", err)
 	}
-	databaseDriver, err := migratemysql.WithInstance(sqlDB, &migratemysql.Config{})
-	if err != nil {
-		return fmt.Errorf("初始化迁移驱动失败: %w", err)
-	}
-	m, err := migrate.NewWithInstance("iofs", sourceDriver, "mysql", databaseDriver)
+	m, err := migrate.NewWithSourceInstance("iofs", sourceDriver, "mysql://"+dialector.DSN)
 	if err != nil {
 		return fmt.Errorf("初始化迁移失败: %w", err)
 	}

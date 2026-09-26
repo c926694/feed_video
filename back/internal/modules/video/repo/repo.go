@@ -104,16 +104,28 @@ func (r *Repo) CountByAuthor(ctx context.Context, authorID uint64) (int64, error
 	return count, err
 }
 
-func (r *Repo) ListByAuthorsBefore(ctx context.Context, authorIDs []uint64, limit uint64, before *time.Time) ([]Video, error) {
+// ListByAuthorsBefore 关注流分页：作者集合内按发布时间倒序，双字段游标定位，第一页 lastID 传 0
+func (r *Repo) ListByAuthorsBefore(ctx context.Context, authorIDs []uint64, limit uint64, lastCreatedAt time.Time, lastID uint64) ([]Video, error) {
 	if len(authorIDs) == 0 {
 		return []Video{}, nil
 	}
 	items := make([]Video, 0, limit)
 	query := r.db.WithContext(ctx).Model(&Video{}).Where("author_id in ?", authorIDs)
-	if before != nil {
-		query = query.Where("created_at < ?", *before)
+	if lastID > 0 {
+		query = query.Where("created_at <= ? AND id < ?", lastCreatedAt, lastID)
 	}
-	err := query.Order("created_at desc").Limit(int(limit)).Find(&items).Error
+	err := query.Order("created_at desc, id desc").Limit(int(limit)).Find(&items).Error
+	return items, err
+}
+
+// ListFeedPage 推荐流分页：全表按发布时间倒序，双字段游标定位，第一页 lastID 传 0
+func (r *Repo) ListFeedPage(ctx context.Context, limit uint64, lastCreatedAt time.Time, lastID uint64) ([]Video, error) {
+	items := make([]Video, 0, limit)
+	query := r.db.WithContext(ctx).Model(&Video{})
+	if lastID > 0 {
+		query = query.Where("created_at <= ? AND id < ?", lastCreatedAt, lastID)
+	}
+	err := query.Order("created_at desc, id desc").Limit(int(limit)).Find(&items).Error
 	return items, err
 }
 
@@ -121,24 +133,16 @@ func (r *Repo) Delete(ctx context.Context, videoID uint64) error {
 	return r.db.WithContext(ctx).Delete(&Video{}, videoID).Error
 }
 
-func (r *Repo) IncreaseLikeCount(ctx context.Context, videoID uint64) error {
+// SyncLikeCount 按实际点赞数对账视频点赞数
+func (r *Repo) SyncLikeCount(ctx context.Context, videoID uint64, count int64) error {
 	return r.db.WithContext(ctx).Model(&Video{}).Where("id = ?", videoID).
-		Update("like_count", gorm.Expr("like_count + 1")).Error
+		Update("like_count", count).Error
 }
 
-func (r *Repo) DecreaseLikeCount(ctx context.Context, videoID uint64) error {
+// SyncCommentCount 按实际评论数对账视频评论数
+func (r *Repo) SyncCommentCount(ctx context.Context, videoID uint64, count int64) error {
 	return r.db.WithContext(ctx).Model(&Video{}).Where("id = ?", videoID).
-		Update("like_count", gorm.Expr("CASE WHEN like_count > 0 THEN like_count - 1 ELSE 0 END")).Error
-}
-
-func (r *Repo) IncreaseCommentCount(ctx context.Context, videoID uint64) error {
-	return r.db.WithContext(ctx).Model(&Video{}).Where("id = ?", videoID).
-		Update("comment_count", gorm.Expr("comment_count + 1")).Error
-}
-
-func (r *Repo) DecreaseCommentCount(ctx context.Context, videoID uint64) error {
-	return r.db.WithContext(ctx).Model(&Video{}).Where("id = ?", videoID).
-		Update("comment_count", gorm.Expr("CASE WHEN comment_count > 0 THEN comment_count - 1 ELSE 0 END")).Error
+		Update("comment_count", count).Error
 }
 
 // UpdateAuthorInfo 刷新某个作者全部视频上冗余的展示字段

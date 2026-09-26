@@ -113,3 +113,15 @@ func (r *Repo) FollowingIDs(ctx context.Context, follower uint64) ([]uint64, err
 func followKey(follower uint64) string {
 	return fmt.Sprintf(followKeyFormat, follower)
 }
+
+// CountFollowing 统计用户关注的人数
+func (r *Repo) CountFollowing(ctx context.Context, follower uint64) (int64, error) {
+	return r.redisClient.SCard(ctx, followKey(follower)).Result()
+}
+
+// CountFollowers 统计用户的粉丝数
+func (r *Repo) CountFollowers(ctx context.Context, following uint64) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&Follow{}).Where("following = ?", following).Count(&count).Error
+	return count, err
+}

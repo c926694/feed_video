@@ -5,7 +5,8 @@ import type { Video } from "@/types/domain";
 
 interface FeedParams {
   limit?: number;
-  lastScore?: string;
+  lastCreatedAt?: number;
+  lastId?: number;
 }
 
 interface HotFeedParams {
@@ -62,22 +63,21 @@ export async function fetchMyVideos(limit = 60) {
 }
 
 async function fetchFeedByPath(path: string, params: FeedParams = {}) {
-  const { limit = 5, lastScore } = params;
+  const { limit = 5, lastCreatedAt, lastId } = params;
   const { data } = await http.get(path, {
     params: {
       limit,
       _ts: Date.now(),
-      ...(lastScore ? { last_score: lastScore } : {})
+      ...(lastId ? { last_created_at: lastCreatedAt, last_id: lastId } : {})
     }
   });
   const body = unwrapData<unknown>(data);
   const list = pickVideoList(body);
+  const payload = typeof body === "object" && body ? (body as Record<string, unknown>) : {};
   return {
     videos: list.map(normalizeVideo),
-    nextScore:
-      typeof body === "object" && body
-        ? String((body as Record<string, unknown>).last_score ?? (body as Record<string, unknown>).next_score ?? "")
-        : ""
+    nextCreatedAt: Number(payload.last_created_at ?? 0),
+    nextId: Number(payload.last_id ?? 0)
   };
 }
 

@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <main ref="containerRef" class="feed-container" @scroll.passive="onScroll">
     <VideoCard
       v-for="(video, idx) in displayVideos"
@@ -61,8 +61,12 @@ const loading = ref(false);
 const recommendVideos = ref<Video[]>([]);
 const followVideos = ref<Video[]>([]);
 const hotVideos = ref<Video[]>([]);
-const currentScoreRecommend = ref("");
-const currentScoreFollow = ref("");
+interface FeedCursor {
+  createdAt: number;
+  id: number;
+}
+const recommendCursor = ref<FeedCursor | null>(null);
+const followCursor = ref<FeedCursor | null>(null);
 const hotNextOffset = ref(0);
 const hotHasMore = ref(true);
 const hotInterval = 60;
@@ -78,10 +82,10 @@ const displayVideos = computed(() => {
   return recommendVideos.value;
 });
 const currentNextScore = computed(() => {
-  if (props.tab === "recommend") return currentScoreRecommend.value;
-  if (props.tab === "follow") return currentScoreFollow.value;
+  if (props.tab === "recommend") return recommendCursor.value ? "1" : "";
+  if (props.tab === "follow") return followCursor.value ? "1" : "";
   if (props.tab === "hot") return hotHasMore.value ? "1" : "";
-  return currentScoreRecommend.value;
+  return recommendCursor.value ? "1" : "";
 });
 const showEndTip = computed(
   () =>
@@ -127,7 +131,7 @@ async function loadInitial() {
 
     const feed = await fetchFeedVideos({ limit: 5 });
     recommendVideos.value = feed.videos;
-    currentScoreRecommend.value = feed.nextScore;
+    recommendCursor.value = feed.nextId ? { createdAt: feed.nextCreatedAt, id: feed.nextId } : null;
 
     if (!recommendVideos.value.length) {
       const hot = await fetchHotVideos({
@@ -203,10 +207,14 @@ async function loadMore() {
   loading.value = true;
   try {
     if (props.tab === "follow") {
-      if (!currentScoreFollow.value) return;
-      const follow = await fetchFollowVideos({ limit: 5, lastScore: currentScoreFollow.value });
+      if (!followCursor.value) return;
+      const follow = await fetchFollowVideos({
+        limit: 5,
+        lastCreatedAt: followCursor.value.createdAt,
+        lastId: followCursor.value.id
+      });
       followVideos.value = upsertVideosKeepOrder(followVideos.value, follow.videos);
-      currentScoreFollow.value = follow.nextScore;
+      followCursor.value = follow.nextId ? { createdAt: follow.nextCreatedAt, id: follow.nextId } : null;
       return;
     }
     if (props.tab === "hot") {
@@ -221,10 +229,14 @@ async function loadMore() {
       hotHasMore.value = hot.hasMore;
       return;
     }
-    if (!currentScoreRecommend.value) return;
-    const feed = await fetchFeedVideos({ limit: 5, lastScore: currentScoreRecommend.value });
+    if (!recommendCursor.value) return;
+    const feed = await fetchFeedVideos({
+      limit: 5,
+      lastCreatedAt: recommendCursor.value.createdAt,
+      lastId: recommendCursor.value.id
+    });
     recommendVideos.value = upsertVideosKeepOrder(recommendVideos.value, feed.videos);
-    currentScoreRecommend.value = feed.nextScore;
+    recommendCursor.value = feed.nextId ? { createdAt: feed.nextCreatedAt, id: feed.nextId } : null;
   } finally {
     loading.value = false;
   }
@@ -264,7 +276,7 @@ async function toggleFollow(userId: number) {
   followVideos.value = patchFollow(followVideos.value);
   hotVideos.value = patchFollow(hotVideos.value);
 
-  currentScoreFollow.value = "";
+  followCursor.value = null;
   followVideos.value = [];
   if (props.tab === "follow") {
     await loadFollowInitial();
@@ -276,7 +288,7 @@ async function loadFollowInitial() {
   try {
     const follow = await fetchFollowVideos({ limit: 5 });
     followVideos.value = follow.videos;
-    currentScoreFollow.value = follow.nextScore;
+    followCursor.value = follow.nextId ? { createdAt: follow.nextCreatedAt, id: follow.nextId } : null;
   } finally {
     loading.value = false;
   }

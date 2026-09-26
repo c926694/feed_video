@@ -36,28 +36,25 @@ type Logic struct {
 	uploader *upload.Uploader
 }
 
-// GetFeedVideos 按发布时间倒序取一页
-func (l *Logic) GetFeedVideos(ctx context.Context, limit uint64, lastScore float64, userID uint64) ([]VideoItem, float64, error) {
-	ids, err := l.feed.FeedIDs(ctx, limit, lastScore)
+// GetFeedVideos 按发布时间倒序取一页，双字段游标分页，第一页 lastId 传 0
+func (l *Logic) GetFeedVideos(ctx context.Context, limit uint64, lastCreatedAt int64, lastId uint64, userID uint64) ([]VideoItem, int64, uint64, error) {
+	var cursor time.Time
+	if lastId > 0 {
+		cursor = time.UnixMilli(lastCreatedAt)
+	}
+	items, err := l.videos.ListFeedPage(ctx, limit, cursor, lastId)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
-	if len(ids) == 0 {
-		return []VideoItem{}, 0, nil
+	if len(items) == 0 {
+		return []VideoItem{}, 0, 0, nil
 	}
-	items, err := l.videos.FilterByIDs(ctx, ids)
+	list, err := l.assemble(ctx, items, userID)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
-	ordered := orderVideos(items, ids)
-	if len(ordered) == 0 {
-		return []VideoItem{}, 0, nil
-	}
-	list, err := l.assemble(ctx, ordered, userID)
-	if err != nil {
-		return nil, 0, err
-	}
-	return list, float64(list[len(list)-1].CreatedAt.UnixMicro()), nil
+	last := list[len(list)-1]
+	return list, last.CreatedAt.UnixMilli(), last.Id, nil
 }
 
 // GetHotVideos 按热度倒序取一页
@@ -94,36 +91,36 @@ func (l *Logic) GetHotVideos(ctx context.Context, limit uint64, offset uint64, i
 	return list, offset + consumed, hasMore, nil
 }
 
-// GetFollowFeedVideos 取关注的人发布的视频
-func (l *Logic) GetFollowFeedVideos(ctx context.Context, limit uint64, lastScore float64, userID uint64) ([]VideoItem, float64, error) {
+// GetFollowFeedVideos 取关注的人发布的视频，双字段游标分页，第一页 lastId 传 0
+func (l *Logic) GetFollowFeedVideos(ctx context.Context, limit uint64, lastCreatedAt int64, lastId uint64, userID uint64) ([]VideoItem, int64, uint64, error) {
 	followingIDs, err := l.follows.FollowingIDs(ctx, userID)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 	if len(followingIDs) == 0 {
-		return []VideoItem{}, 0, nil
+		return []VideoItem{}, 0, 0, nil
 	}
 
-	var before *time.Time
-	if lastScore > 0 {
-		t := time.UnixMicro(int64(lastScore))
-		before = &t
+	var cursor time.Time
+	if lastId > 0 {
+		cursor = time.UnixMilli(lastCreatedAt)
 	}
-	items, err := l.videos.ListByAuthorsBefore(ctx, followingIDs, limit, before)
+	items, err := l.videos.ListByAuthorsBefore(ctx, followingIDs, limit, cursor, lastId)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 	if len(items) == 0 {
-		return []VideoItem{}, 0, nil
+		return []VideoItem{}, 0, 0, nil
 	}
 	list, err := l.assemble(ctx, items, userID)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
-	return list, float64(list[len(list)-1].CreatedAt.UnixMicro()), nil
+	last := list[len(list)-1]
+	return list, last.CreatedAt.UnixMilli(), last.Id, nil
 }
 
-// HandleVideoCreated 新视频进 Feed 索引与当前分钟的热度桶
+// HandleVideoCreated 新视频进当前分钟的热度桶
 func (l *Logic) HandleVideoCreated(ctx context.Context, payload []byte) error {
 	var created videoevent.CreatedEvent
 	if err := json.Unmarshal(payload, &created); err != nil {
@@ -132,14 +129,6 @@ func (l *Logic) HandleVideoCreated(ctx context.Context, payload []byte) error {
 	if created.VideoID == 0 {
 		return consumer.Permanent(errors.New("视频创建事件里没有 videoId"))
 	}
-	createdAt := created.CreatedAt
-	if createdAt.IsZero() {
-		createdAt = time.Now()
-	}
-	if err := l.feed.AddToFeed(ctx, created.VideoID, createdAt); err != nil {
-		slog.Error("加入 Feed 索引失败", "video_id", created.VideoID, "error", err)
-		return err
-	}
 	if err := l.feed.EnsureHotMember(ctx, created.VideoID, time.Now()); err != nil {
 		slog.Error("加入热度桶失败", "video_id", created.VideoID, "error", err)
 		return err
@@ -147,7 +136,7 @@ func (l *Logic) HandleVideoCreated(ctx context.Context, payload []byte) error {
 	return nil
 }
 
-// HandleVideoDeleted 把视频从 Feed 索引与热度桶里清掉
+// HandleVideoDeleted 把视频从热度桶里清掉
 func (l *Logic) HandleVideoDeleted(ctx context.Context, payload []byte) error {
 	var deleted videoevent.DeletedEvent
 	if err := json.Unmarshal(payload, &deleted); err != nil {
@@ -155,10 +144,6 @@ func (l *Logic) HandleVideoDeleted(ctx context.Context, payload []byte) error {
 	}
 	if deleted.VideoID == 0 {
 		return consumer.Permanent(errors.New("删除视频事件里没有 videoId"))
-	}
-	if err := l.feed.RemoveFromFeed(ctx, deleted.VideoID); err != nil {
-		slog.Error("移出 Feed 索引失败", "video_id", deleted.VideoID, "error", err)
-		return err
 	}
 	return l.feed.RemoveFromHotBuckets(ctx, deleted.VideoID, maxHotInterval)
 }

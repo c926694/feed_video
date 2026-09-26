@@ -82,32 +82,20 @@ func (r *Repo) UpdateProfile(ctx context.Context, userID uint64, updates map[str
 	return r.db.WithContext(ctx).Model(&User{}).Where("id = ?", userID).Updates(updates).Error
 }
 
-func (r *Repo) IncreaseFollowCount(ctx context.Context, userID uint64) error {
+// SyncFollowCount 按实际关注数对账
+func (r *Repo) SyncFollowCount(ctx context.Context, userID uint64, count int64) error {
 	return r.db.WithContext(ctx).Model(&User{}).Where("id = ?", userID).
-		Update("follow_count", gorm.Expr("follow_count + 1")).Error
+		Update("follow_count", count).Error
 }
 
-func (r *Repo) DecreaseFollowCount(ctx context.Context, userID uint64) error {
+// SyncFollowerCount 按实际粉丝数对账
+func (r *Repo) SyncFollowerCount(ctx context.Context, userID uint64, count int64) error {
 	return r.db.WithContext(ctx).Model(&User{}).Where("id = ?", userID).
-		Update("follow_count", gorm.Expr("CASE WHEN follow_count > 0 THEN follow_count - 1 ELSE 0 END")).Error
+		Update("follower_count", count).Error
 }
 
-func (r *Repo) IncreaseFollowerCount(ctx context.Context, userID uint64) error {
+// SyncVideoCount 按实际视频数对账
+func (r *Repo) SyncVideoCount(ctx context.Context, userID uint64, count int64) error {
 	return r.db.WithContext(ctx).Model(&User{}).Where("id = ?", userID).
-		Update("follower_count", gorm.Expr("follower_count + 1")).Error
-}
-
-func (r *Repo) DecreaseFollowerCount(ctx context.Context, userID uint64) error {
-	return r.db.WithContext(ctx).Model(&User{}).Where("id = ?", userID).
-		Update("follower_count", gorm.Expr("CASE WHEN follower_count > 0 THEN follower_count - 1 ELSE 0 END")).Error
-}
-
-func (r *Repo) IncreaseVideoCount(ctx context.Context, userID uint64) error {
-	return r.db.WithContext(ctx).Model(&User{}).Where("id = ?", userID).
-		Update("video_count", gorm.Expr("video_count + 1")).Error
-}
-
-func (r *Repo) DecreaseVideoCount(ctx context.Context, userID uint64) error {
-	return r.db.WithContext(ctx).Model(&User{}).Where("id = ?", userID).
-		Update("video_count", gorm.Expr("CASE WHEN video_count > 0 THEN video_count - 1 ELSE 0 END")).Error
+		Update("video_count", count).Error
 }

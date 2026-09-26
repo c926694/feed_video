@@ -22,7 +22,8 @@ type VideoItem struct {
 // FeedRes 普通 Feed 响应
 type FeedRes struct {
 	FeedVideoList []VideoItem `json:"feed_video_list"`
-	LastScore     float64     `json:"last_score"`
+	LastCreatedAt int64       `json:"last_created_at"`
+	LastId        uint64      `json:"last_id"`
 }
 
 // HotFeedRes 热榜响应

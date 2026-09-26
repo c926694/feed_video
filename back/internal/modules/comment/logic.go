@@ -134,14 +134,13 @@ func (l *Logic) HandleLikeSwitched(ctx context.Context, payload []byte) error {
 		return consumer.Permanent(errors.New("点赞事件里没有 targetId"))
 	}
 
-	var err error
-	if switched.Liked {
-		err = l.comments.IncreaseLikeCount(ctx, switched.TargetID)
-	} else {
-		err = l.comments.DecreaseLikeCount(ctx, switched.TargetID)
-	}
+	count, err := l.likes.CountLikes(ctx, likeevent.TargetComment, switched.TargetID)
 	if err != nil {
-		slog.Error("更新评论点赞数失败", "comment_id", switched.TargetID, "error", err)
+		slog.Error("统计评论点赞数失败", "comment_id", switched.TargetID, "error", err)
+		return err
+	}
+	if err = l.comments.SyncLikeCount(ctx, switched.TargetID, count); err != nil {
+		slog.Error("对账评论点赞数失败", "comment_id", switched.TargetID, "error", err)
 		return err
 	}
 	return nil

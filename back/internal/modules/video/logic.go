@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	commentevent "simple_tiktok/internal/modules/comment/event"
+	commentrepo "simple_tiktok/internal/modules/comment/repo"
 	followrepo "simple_tiktok/internal/modules/follow/repo"
 	likeevent "simple_tiktok/internal/modules/like/event"
 	likerepo "simple_tiktok/internal/modules/like/repo"
@@ -36,6 +37,7 @@ const (
 // Logic 视频模块的业务逻辑
 type Logic struct {
 	videos   *videorepo.Repo
+	comments *commentrepo.Repo
 	users    *userrepo.Repo
 	likes    *likerepo.Repo
 	follows  *followrepo.Repo
@@ -172,20 +174,19 @@ func (l *Logic) HandleLikeSwitched(ctx context.Context, payload []byte) error {
 		return consumer.Permanent(errors.New("点赞事件里没有 targetId"))
 	}
 
-	var err error
-	if switched.Liked {
-		err = l.videos.IncreaseLikeCount(ctx, switched.TargetID)
-	} else {
-		err = l.videos.DecreaseLikeCount(ctx, switched.TargetID)
-	}
+	count, err := l.likes.CountLikes(ctx, likeevent.TargetVideo, switched.TargetID)
 	if err != nil {
-		slog.Error("更新视频点赞数失败", "video_id", switched.TargetID, "error", err)
+		slog.Error("统计视频点赞数失败", "video_id", switched.TargetID, "error", err)
+		return err
+	}
+	if err = l.videos.SyncLikeCount(ctx, switched.TargetID, count); err != nil {
+		slog.Error("对账视频点赞数失败", "video_id", switched.TargetID, "error", err)
 		return err
 	}
 	return l.videos.DeleteInfoCache(ctx, switched.TargetID)
 }
 
-// HandleCommentCreated 订阅评论创建事件，加评论数
+// HandleCommentCreated 订阅评论创建事件，按实际评论数对账
 func (l *Logic) HandleCommentCreated(ctx context.Context, payload []byte) error {
 	var created commentevent.CreatedEvent
 	if err := json.Unmarshal(payload, &created); err != nil {
@@ -194,14 +195,10 @@ func (l *Logic) HandleCommentCreated(ctx context.Context, payload []byte) error 
 	if created.VideoID == 0 {
 		return consumer.Permanent(errors.New("评论事件里没有 videoId"))
 	}
-	if err := l.videos.IncreaseCommentCount(ctx, created.VideoID); err != nil {
-		slog.Error("更新视频评论数失败", "video_id", created.VideoID, "error", err)
-		return err
-	}
-	return l.videos.DeleteInfoCache(ctx, created.VideoID)
+	return l.syncCommentCount(ctx, created.VideoID)
 }
 
-// HandleCommentDeleted 订阅评论删除事件，减评论数
+// HandleCommentDeleted 订阅评论删除事件，按实际评论数对账
 func (l *Logic) HandleCommentDeleted(ctx context.Context, payload []byte) error {
 	var deleted commentevent.DeletedEvent
 	if err := json.Unmarshal(payload, &deleted); err != nil {
@@ -210,11 +207,21 @@ func (l *Logic) HandleCommentDeleted(ctx context.Context, payload []byte) error 
 	if deleted.VideoID == 0 {
 		return consumer.Permanent(errors.New("评论事件里没有 videoId"))
 	}
-	if err := l.videos.DecreaseCommentCount(ctx, deleted.VideoID); err != nil {
-		slog.Error("更新视频评论数失败", "video_id", deleted.VideoID, "error", err)
+	return l.syncCommentCount(ctx, deleted.VideoID)
+}
+
+// syncCommentCount 按评论表实际行数对账视频评论数
+func (l *Logic) syncCommentCount(ctx context.Context, videoID uint64) error {
+	count, err := l.comments.CountByVideo(ctx, videoID)
+	if err != nil {
+		slog.Error("统计视频评论数失败", "video_id", videoID, "error", err)
 		return err
 	}
-	return l.videos.DeleteInfoCache(ctx, deleted.VideoID)
+	if err = l.videos.SyncCommentCount(ctx, videoID, count); err != nil {
+		slog.Error("对账视频评论数失败", "video_id", videoID, "error", err)
+		return err
+	}
+	return l.videos.DeleteInfoCache(ctx, videoID)
 }
 
 func (l *Logic) toInfoRes(item videorepo.Video) InfoRes {

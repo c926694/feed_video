@@ -10,7 +10,6 @@ import (
 )
 
 const (
-	feedVideoKey    = "feed:video"
 	hotMinutePrefix = "feed:hot:video:1m"
 	hotMergePrefix  = "feed:hot:video:merge"
 	hotMinuteTTL    = 70 * time.Minute
@@ -24,32 +23,6 @@ type Repo struct {
 
 func New(redisClient *redis.Client) *Repo {
 	return &Repo{redisClient: redisClient}
-}
-
-// AddToFeed 把视频按发布时间加进 Feed 索引
-func (r *Repo) AddToFeed(ctx context.Context, videoID uint64, createdAt time.Time) error {
-	return r.redisClient.ZAdd(ctx, feedVideoKey, redis.Z{
-		Score:  float64(createdAt.UnixMicro()),
-		Member: videoID,
-	}).Err()
-}
-
-// RemoveFromFeed 把视频移出 Feed 索引
-func (r *Repo) RemoveFromFeed(ctx context.Context, videoID uint64) error {
-	return r.redisClient.ZRem(ctx, feedVideoKey, videoID).Err()
-}
-
-// FeedIDs 按发布时间倒序取一页视频 ID
-func (r *Repo) FeedIDs(ctx context.Context, limit uint64, lastScore float64) ([]uint64, error) {
-	member := &redis.ZRangeBy{Min: "-inf", Max: "+inf", Offset: 0, Count: int64(limit)}
-	if lastScore > 0 {
-		member.Max = "(" + strconv.FormatFloat(lastScore, 'f', -1, 64)
-	}
-	rawIDs, err := r.redisClient.ZRevRangeByScore(ctx, feedVideoKey, member).Result()
-	if err != nil {
-		return nil, err
-	}
-	return parseIDs(rawIDs)
 }
 
 // EnsureHotMember 保证视频出现在当前分钟的热度桶里

@@ -1,7 +1,6 @@
 package feed
 
 import (
-	"math"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -19,9 +18,14 @@ func NewController(Logic *Logic) *Controller {
 }
 
 func (h *Controller) GetFeedVideos(c *gin.Context) {
-	lastScore, err := strconv.ParseFloat(c.DefaultQuery("last_score", strconv.FormatFloat(math.MaxFloat64, 'f', -1, 64)), 64)
+	lastCreatedAt, err := strconv.ParseInt(c.DefaultQuery("last_created_at", "0"), 10, 64)
 	if err != nil {
-		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "last_score 参数不合法"))
+		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "last_created_at 参数不合法"))
+		return
+	}
+	lastID, err := strconv.ParseUint(c.DefaultQuery("last_id", "0"), 10, 64)
+	if err != nil {
+		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "last_id 参数不合法"))
 		return
 	}
 	limit, err := strconv.ParseUint(c.DefaultQuery("limit", "3"), 10, 64)
@@ -29,12 +33,12 @@ func (h *Controller) GetFeedVideos(c *gin.Context) {
 		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "limit 参数不合法"))
 		return
 	}
-	list, nextScore, err := h.Logic.GetFeedVideos(c.Request.Context(), limit, lastScore, auth.UserID(c))
+	list, nextCreatedAt, nextID, err := h.Logic.GetFeedVideos(c.Request.Context(), limit, lastCreatedAt, lastID, auth.UserID(c))
 	if err != nil {
 		httpx.Fail(c, err)
 		return
 	}
-	httpx.OK(c, FeedRes{FeedVideoList: list, LastScore: nextScore})
+	httpx.OK(c, FeedRes{FeedVideoList: list, LastCreatedAt: nextCreatedAt, LastId: nextID})
 }
 
 func (h *Controller) GetFeedHotVideos(c *gin.Context) {
@@ -67,9 +71,14 @@ func (h *Controller) GetFeedHotVideos(c *gin.Context) {
 }
 
 func (h *Controller) GetFollowFeedVideos(c *gin.Context) {
-	lastScore, err := strconv.ParseFloat(c.DefaultQuery("last_score", strconv.FormatFloat(math.MaxFloat64, 'f', -1, 64)), 64)
+	lastCreatedAt, err := strconv.ParseInt(c.DefaultQuery("last_created_at", "0"), 10, 64)
 	if err != nil {
-		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "last_score 参数不合法"))
+		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "last_created_at 参数不合法"))
+		return
+	}
+	lastID, err := strconv.ParseUint(c.DefaultQuery("last_id", "0"), 10, 64)
+	if err != nil {
+		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "last_id 参数不合法"))
 		return
 	}
 	limit, err := strconv.ParseUint(c.DefaultQuery("limit", "3"), 10, 64)
@@ -77,10 +86,10 @@ func (h *Controller) GetFollowFeedVideos(c *gin.Context) {
 		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "limit 参数不合法"))
 		return
 	}
-	list, nextScore, err := h.Logic.GetFollowFeedVideos(c.Request.Context(), limit, lastScore, auth.UserID(c))
+	list, nextCreatedAt, nextID, err := h.Logic.GetFollowFeedVideos(c.Request.Context(), limit, lastCreatedAt, lastID, auth.UserID(c))
 	if err != nil {
 		httpx.Fail(c, err)
 		return
 	}
-	httpx.OK(c, FeedRes{FeedVideoList: list, LastScore: nextScore})
+	httpx.OK(c, FeedRes{FeedVideoList: list, LastCreatedAt: nextCreatedAt, LastId: nextID})
 }
