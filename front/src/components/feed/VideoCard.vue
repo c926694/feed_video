@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <article class="video-card" :class="{ framed }">
     <video
       ref="videoRef"
@@ -244,7 +244,9 @@ function formatTime(rawSeconds: number) {
 .video-player {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  /* 竖屏视频放进宽卡片时，contain 会完整显示整幅画面，上下或左右留黑边；
+     cover 会按容器比例裁掉多余部分，画面会缺一块 */
+  object-fit: contain;
   border-radius: inherit;
 }
 
