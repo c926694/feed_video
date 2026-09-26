@@ -37,7 +37,6 @@ type AccessClaims struct {
 type TokenPair struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
-	ExpiresIn    int64  `json:"expires_in"`
 }
 
 // Service 负责签发、校验、撤销登录凭证。
@@ -165,7 +164,6 @@ func (s *Service) signAccess(userID uint64, refreshToken string) TokenPair {
 	return TokenPair{
 		AccessToken:  token,
 		RefreshToken: refreshToken,
-		ExpiresIn:    int64(s.accessTTL.Seconds()),
 	}
 }
 
