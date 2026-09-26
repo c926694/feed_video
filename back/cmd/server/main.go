@@ -73,7 +73,7 @@ func main() {
 		log.Fatalf("初始化 kafka 生产者失败: %v", err)
 	}
 
-	authService, err := auth.New(cfg.JWT.Secret, cfg.JWT.ExpireHours, redisClient)
+	authService, err := auth.New(cfg.JWT.Secret, cfg.JWT.AccessMinutes, cfg.JWT.RefreshHours, redisClient)
 	if err != nil {
 		log.Fatalf("初始化鉴权失败: %v", err)
 	}

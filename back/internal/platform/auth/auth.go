@@ -2,7 +2,11 @@ package auth
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,107 +18,123 @@ import (
 )
 
 const (
-	// TokenKey Redis 里保存 token 的键格式
-	TokenKey = "jwt_token:%d"
-	// CtxUserID 与 CtxUserNickName 是写入 gin 上下文使用的键
-	CtxUserID       = "userId"
-	CtxUserNickName = "userNickName"
+	// RefreshKey 是 refresh token 在 Redis 里的键格式，值是用户 ID
+	RefreshKey = "refresh:%s"
+	// CtxUserID 是写入 gin 上下文使用的键
+	CtxUserID = "userId"
 
-	defaultExpireHours = 72
+	defaultAccessMinutes = 15
+	defaultRefreshHours  = 336
+	refreshTokenBytes    = 32
 )
 
-type Claims struct {
-	UserID       uint64 `json:"user_id"`
-	UserNickName string `json:"user_nick_name"`
+// AccessClaims 是 access token 的内容，只用标准字段
+type AccessClaims struct {
 	jwt.RegisteredClaims
 }
 
-// Service 负责签发与校验登录凭证
+// TokenPair 登录与刷新返回给前端的一对令牌
+type TokenPair struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	ExpiresIn    int64  `json:"expires_in"`
+}
+
+// Service 负责签发、校验、撤销登录凭证。
+// access token 是无状态 JWT，只验签与校验有效期；refresh token 是随机串，
+// 服务端按原文存一条记录，刷新时整体轮换，登出时删除。
 type Service struct {
 	secret      string
-	expireHours int64
+	accessTTL   time.Duration
+	refreshTTL  time.Duration
 	redisClient *redis.Client
 }
 
-func New(secret string, expireHours int64, redisClient *redis.Client) (*Service, error) {
+func New(secret string, accessMinutes int64, refreshHours int64, redisClient *redis.Client) (*Service, error) {
 	if secret == "" {
 		return nil, fmt.Errorf("jwt secret 为空")
 	}
-	if expireHours <= 0 {
-		expireHours = defaultExpireHours
+	if accessMinutes <= 0 {
+		accessMinutes = defaultAccessMinutes
+	}
+	if refreshHours <= 0 {
+		refreshHours = defaultRefreshHours
 	}
 	return &Service{
 		secret:      secret,
-		expireHours: expireHours,
+		accessTTL:   time.Duration(accessMinutes) * time.Minute,
+		refreshTTL:  time.Duration(refreshHours) * time.Hour,
 		redisClient: redisClient,
 	}, nil
 }
 
-// GenerateToken 签发 token 并写入 Redis
-func (s *Service) GenerateToken(ctx context.Context, userID uint64, nickName string) (string, error) {
-	now := time.Now()
-	claims := Claims{
-		UserID:       userID,
-		UserNickName: nickName,
-		RegisteredClaims: jwt.RegisteredClaims{
-			IssuedAt:  jwt.NewNumericDate(now),
-			ExpiresAt: jwt.NewNumericDate(now.Add(s.tokenTTL())),
-		},
-	}
-	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(s.secret))
+// Issue 登录：生成 refresh token 并写进 Redis，签发 access token
+func (s *Service) Issue(ctx context.Context, userID uint64) (TokenPair, error) {
+	refreshToken, err := randomToken(refreshTokenBytes)
 	if err != nil {
-		return "", err
+		return TokenPair{}, err
 	}
-	if err := s.redisClient.Set(ctx, s.tokenKey(userID), token, s.tokenTTL()).Err(); err != nil {
-		return "", err
+	if err = s.redisClient.Set(ctx, refreshKey(refreshToken), strconv.FormatUint(userID, 10), s.refreshTTL).Err(); err != nil {
+		return TokenPair{}, err
 	}
-	return token, nil
+	return s.signAccess(userID, refreshToken), nil
 }
 
-// Revoke 删除 Redis 里保存的 token
-func (s *Service) Revoke(ctx context.Context, userID uint64) error {
-	return s.redisClient.Del(ctx, s.tokenKey(userID)).Err()
+// Refresh 用 refresh token 换一对新令牌。旧 refresh 立即失效，新 refresh 接替。
+func (s *Service) Refresh(ctx context.Context, refreshToken string) (TokenPair, error) {
+	invalid := httpx.New(httpx.CodeUnauthorized, "登录已失效，请重新登录")
+	userIDStr, err := s.redisClient.Get(ctx, refreshKey(refreshToken)).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return TokenPair{}, invalid
+		}
+		return TokenPair{}, err
+	}
+	userID, err := strconv.ParseUint(userIDStr, 10, 64)
+	if err != nil {
+		return TokenPair{}, fmt.Errorf("解析 refresh 记录里的用户 ID 失败: %w", err)
+	}
+
+	newRefresh, err := randomToken(refreshTokenBytes)
+	if err != nil {
+		return TokenPair{}, err
+	}
+	pipe := s.redisClient.TxPipeline()
+	pipe.Del(ctx, refreshKey(refreshToken))
+	pipe.Set(ctx, refreshKey(newRefresh), userIDStr, s.refreshTTL)
+	if _, err = pipe.Exec(ctx); err != nil {
+		return TokenPair{}, err
+	}
+	return s.signAccess(userID, newRefresh), nil
 }
 
-// Middleware 校验请求头里的 token，把用户身份写入 gin 上下文，并顺带刷新有效期
+// Revoke 登出：删除这条 refresh 记录，之后再用它刷新会失败
+func (s *Service) Revoke(ctx context.Context, refreshToken string) error {
+	return s.redisClient.Del(ctx, refreshKey(refreshToken)).Err()
+}
+
+// Middleware 校验 access token，只验签与校验有效期，不查存储
 func (s *Service) Middleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		authHeader := strings.TrimSpace(c.GetHeader("Authorization"))
-		if authHeader == "" {
+		token, ok := bearerToken(c)
+		if !ok {
 			httpx.Fail(c, httpx.New(httpx.CodeUnauthorized, "请先登录"))
 			c.Abort()
 			return
 		}
-
-		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-			httpx.Fail(c, httpx.New(httpx.CodeUnauthorized, "登录状态无效，请重新登录"))
-			c.Abort()
-			return
-		}
-
-		claims, err := s.parseToken(parts[1])
+		claims, err := s.parseAccess(token)
 		if err != nil {
 			httpx.Fail(c, httpx.New(httpx.CodeUnauthorized, "登录状态无效，请重新登录"))
 			c.Abort()
 			return
 		}
-
-		ctx := c.Request.Context()
-		refreshed, err := s.redisClient.Expire(ctx, s.tokenKey(claims.UserID), s.tokenTTL()).Result()
+		userID, err := strconv.ParseUint(claims.Subject, 10, 64)
 		if err != nil {
-			httpx.Fail(c, err)
+			httpx.Fail(c, httpx.New(httpx.CodeUnauthorized, "登录状态无效，请重新登录"))
 			c.Abort()
 			return
 		}
-		if !refreshed {
-			httpx.Fail(c, httpx.New(httpx.CodeUnauthorized, "登录已失效，请重新登录"))
-			c.Abort()
-			return
-		}
-
-		c.Set(CtxUserID, claims.UserID)
-		c.Set(CtxUserNickName, claims.UserNickName)
+		c.Set(CtxUserID, userID)
 		c.Next()
 	}
 }
@@ -129,37 +149,63 @@ func UserID(c *gin.Context) uint64 {
 	return userID
 }
 
-// NickName 从 gin 上下文取出当前登录用户昵称
-func NickName(c *gin.Context) string {
-	value, exists := c.Get(CtxUserNickName)
-	if !exists {
-		return ""
+func (s *Service) signAccess(userID uint64, refreshToken string) TokenPair {
+	now := time.Now()
+	claims := AccessClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   strconv.FormatUint(userID, 10),
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(s.accessTTL)),
+		},
 	}
-	nickName, _ := value.(string)
-	return nickName
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(s.secret))
+	if err != nil {
+		return TokenPair{}
+	}
+	return TokenPair{
+		AccessToken:  token,
+		RefreshToken: refreshToken,
+		ExpiresIn:    int64(s.accessTTL.Seconds()),
+	}
 }
 
-func (s *Service) parseToken(tokenString string) (*Claims, error) {
-	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (any, error) {
+func (s *Service) parseAccess(tokenString string) (*AccessClaims, error) {
+	claims := &AccessClaims{}
+	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (any, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("签名方式不符合预期")
 		}
 		return []byte(s.secret), nil
-	})
+	}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}), jwt.WithExpirationRequired())
 	if err != nil {
 		return nil, err
 	}
-	claims, ok := token.Claims.(*Claims)
-	if !ok || !token.Valid {
-		return nil, fmt.Errorf("token 无效")
+	if !token.Valid {
+		return nil, errors.New("token 无效")
 	}
 	return claims, nil
 }
 
-func (s *Service) tokenKey(userID uint64) string {
-	return fmt.Sprintf(TokenKey, userID)
+func bearerToken(c *gin.Context) (string, bool) {
+	header := strings.TrimSpace(c.GetHeader("Authorization"))
+	if header == "" {
+		return "", false
+	}
+	parts := strings.SplitN(header, " ", 2)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || strings.TrimSpace(parts[1]) == "" {
+		return "", false
+	}
+	return strings.TrimSpace(parts[1]), true
 }
 
-func (s *Service) tokenTTL() time.Duration {
-	return time.Duration(s.expireHours) * time.Hour
+func randomToken(size int) (string, error) {
+	buf := make([]byte, size)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+func refreshKey(refreshToken string) string {
+	return fmt.Sprintf(RefreshKey, refreshToken)
 }

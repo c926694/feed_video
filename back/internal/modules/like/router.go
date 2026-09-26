@@ -7,16 +7,16 @@ import (
 	"simple_tiktok/internal/svc"
 )
 
-// NewModel 装配本模块的业务层，依赖全部来自进程级的 ServiceContext
-func NewModel(ctx *svc.ServiceContext) *Model {
-	return &Model{
+// NewLogic 装配本模块的业务层，依赖全部来自进程级的 ServiceContext
+func NewLogic(ctx *svc.ServiceContext) *Logic {
+	return &Logic{
 		repo:     repo.New(ctx.Redis),
 		producer: ctx.Producer,
 	}
 }
 
 func RegisterHTTP(r *gin.Engine, ctx *svc.ServiceContext) (*gin.Engine, error) {
-	controller := NewController(NewModel(ctx))
+	controller := NewController(NewLogic(ctx))
 	group := r.Group("likes")
 	{
 		group.POST("/video/switchLike/:id", ctx.Auth.Middleware(), controller.LikeVideo)

@@ -12,16 +12,16 @@ import (
 // Name 模块名，用作消费组的一部分，多个模块订阅同一个 topic 时互不争抢
 const Name = "follow"
 
-// NewModel 装配本模块的业务层，依赖全部来自进程级的 ServiceContext
-func NewModel(ctx *svc.ServiceContext) *Model {
-	return &Model{
+// NewLogic 装配本模块的业务层，依赖全部来自进程级的 ServiceContext
+func NewLogic(ctx *svc.ServiceContext) *Logic {
+	return &Logic{
 		repo:     followrepo.New(ctx.DB, ctx.Redis),
 		producer: ctx.Producer,
 	}
 }
 
 func RegisterHTTP(r *gin.Engine, ctx *svc.ServiceContext) (*gin.Engine, error) {
-	controller := NewController(NewModel(ctx))
+	controller := NewController(NewLogic(ctx))
 	group := r.Group("follows")
 	{
 		group.POST("/switchFollow/:follower", ctx.Auth.Middleware(), controller.Follow)
@@ -30,6 +30,6 @@ func RegisterHTTP(r *gin.Engine, ctx *svc.ServiceContext) (*gin.Engine, error) {
 }
 
 func RegisterConsumers(sub *consumer.Consumer, ctx *svc.ServiceContext) error {
-	sub.Subscribe(topic.FollowSwitched, NewModel(ctx).HandleSwitched)
+	sub.Subscribe(topic.FollowSwitched, NewLogic(ctx).HandleSwitched)
 	return nil
 }

@@ -16,28 +16,28 @@ import (
 	"simple_tiktok/internal/platform/kafka/topic"
 )
 
-// Model 关注模块的业务逻辑。关注关系先写 Redis，关系表由订阅方维护。
-type Model struct {
+// Logic 关注模块的业务逻辑。关注关系先写 Redis，关系表由订阅方维护。
+type Logic struct {
 	repo     *repo.Repo
 	producer *producer.Producer
 }
 
-func (m *Model) SwitchFollow(ctx context.Context, targetUserID uint64, currentUserID uint64) (bool, error) {
+func (l *Logic) SwitchFollow(ctx context.Context, targetUserID uint64, currentUserID uint64) (bool, error) {
 	if targetUserID == currentUserID {
 		return false, httpx.New(httpx.CodeBadRequest, "不能关注自己")
 	}
-	followed, err := m.repo.Switch(ctx, currentUserID, targetUserID)
+	followed, err := l.repo.Switch(ctx, currentUserID, targetUserID)
 	if err != nil {
 		return false, err
 	}
 
-	err = m.producer.Publish(ctx, topic.FollowSwitched, strconv.FormatUint(targetUserID, 10), event.SwitchedEvent{
+	err = l.producer.Publish(ctx, topic.FollowSwitched, strconv.FormatUint(targetUserID, 10), event.SwitchedEvent{
 		Follower:  currentUserID,
 		Following: targetUserID,
 		Followed:  followed,
 	})
 	if err != nil {
-		if rollbackErr := m.repo.Reset(ctx, currentUserID, targetUserID, !followed); rollbackErr != nil {
+		if rollbackErr := l.repo.Reset(ctx, currentUserID, targetUserID, !followed); rollbackErr != nil {
 			return false, httpx.New(httpx.CodeInternal, fmt.Sprintf("关注状态回滚失败: %v", rollbackErr))
 		}
 		return false, err
@@ -46,7 +46,7 @@ func (m *Model) SwitchFollow(ctx context.Context, targetUserID uint64, currentUs
 }
 
 // HandleSwitched 订阅自己的事件，维护 follow 表
-func (m *Model) HandleSwitched(ctx context.Context, payload []byte) error {
+func (l *Logic) HandleSwitched(ctx context.Context, payload []byte) error {
 	var switched event.SwitchedEvent
 	if err := json.Unmarshal(payload, &switched); err != nil {
 		return consumer.Permanent(err)
@@ -57,9 +57,9 @@ func (m *Model) HandleSwitched(ctx context.Context, payload []byte) error {
 
 	var err error
 	if switched.Followed {
-		err = m.repo.Create(ctx, switched.Follower, switched.Following)
+		err = l.repo.Create(ctx, switched.Follower, switched.Following)
 	} else {
-		err = m.repo.Delete(ctx, switched.Follower, switched.Following)
+		err = l.repo.Delete(ctx, switched.Follower, switched.Following)
 	}
 	if err != nil {
 		slog.Error("维护关注关系失败", "follower", switched.Follower, "following", switched.Following, "error", err)

@@ -20,6 +20,11 @@ type UpdateProfileReq struct {
 	Avatar   *multipart.FileHeader `form:"avatar"`
 }
 
+// RefreshReq 刷新令牌请求，登出也复用这个结构
+type RefreshReq struct {
+	RefreshToken string `json:"refresh_token"`
+}
+
 // InfoRes 用户信息响应
 type InfoRes struct {
 	UserID        uint64 `json:"user_id"`

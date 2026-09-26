@@ -10,11 +10,11 @@ import (
 )
 
 type Controller struct {
-	model *Model
+	Logic *Logic
 }
 
-func NewController(model *Model) *Controller {
-	return &Controller{model: model}
+func NewController(Logic *Logic) *Controller {
+	return &Controller{Logic: Logic}
 }
 
 func (h *Controller) Follow(c *gin.Context) {
@@ -23,7 +23,7 @@ func (h *Controller) Follow(c *gin.Context) {
 		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "用户 ID 不合法"))
 		return
 	}
-	followed, err := h.model.SwitchFollow(c.Request.Context(), targetUserID, auth.UserID(c))
+	followed, err := h.Logic.SwitchFollow(c.Request.Context(), targetUserID, auth.UserID(c))
 	if err != nil {
 		httpx.Fail(c, err)
 		return

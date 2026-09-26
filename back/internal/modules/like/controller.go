@@ -10,11 +10,11 @@ import (
 )
 
 type Controller struct {
-	model *Model
+	Logic *Logic
 }
 
-func NewController(model *Model) *Controller {
-	return &Controller{model: model}
+func NewController(Logic *Logic) *Controller {
+	return &Controller{Logic: Logic}
 }
 
 func (h *Controller) LikeVideo(c *gin.Context) {
@@ -23,7 +23,7 @@ func (h *Controller) LikeVideo(c *gin.Context) {
 		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "视频 ID 不合法"))
 		return
 	}
-	liked, err := h.model.SwitchVideoLike(c.Request.Context(), videoID, auth.UserID(c))
+	liked, err := h.Logic.SwitchVideoLike(c.Request.Context(), videoID, auth.UserID(c))
 	if err != nil {
 		httpx.Fail(c, err)
 		return
@@ -37,7 +37,7 @@ func (h *Controller) LikeComment(c *gin.Context) {
 		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "评论 ID 不合法"))
 		return
 	}
-	liked, err := h.model.SwitchCommentLike(c.Request.Context(), commentID, auth.UserID(c))
+	liked, err := h.Logic.SwitchCommentLike(c.Request.Context(), commentID, auth.UserID(c))
 	if err != nil {
 		httpx.Fail(c, err)
 		return

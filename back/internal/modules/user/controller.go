@@ -10,11 +10,11 @@ import (
 )
 
 type Controller struct {
-	model *Model
+	Logic *Logic
 }
 
-func NewController(model *Model) *Controller {
-	return &Controller{model: model}
+func NewController(Logic *Logic) *Controller {
+	return &Controller{Logic: Logic}
 }
 
 func (h *Controller) Register(c *gin.Context) {
@@ -23,7 +23,7 @@ func (h *Controller) Register(c *gin.Context) {
 		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "请求参数格式错误"))
 		return
 	}
-	userID, err := h.model.Register(c.Request.Context(), registerReq)
+	userID, err := h.Logic.Register(c.Request.Context(), registerReq)
 	if err != nil {
 		httpx.Fail(c, err)
 		return
@@ -37,16 +37,31 @@ func (h *Controller) Login(c *gin.Context) {
 		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "请求参数格式错误"))
 		return
 	}
-	token, err := h.model.Login(c.Request.Context(), loginReq.Username, loginReq.Password)
+	pair, err := h.Logic.Login(c.Request.Context(), loginReq.Username, loginReq.Password)
 	if err != nil {
 		httpx.Fail(c, err)
 		return
 	}
-	httpx.OK(c, token)
+	httpx.OK(c, pair)
+}
+
+// Refresh 用 refresh token 换一对新令牌，前端在 access 过期时调用
+func (h *Controller) Refresh(c *gin.Context) {
+	var refreshReq RefreshReq
+	if err := c.ShouldBind(&refreshReq); err != nil || refreshReq.RefreshToken == "" {
+		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "缺少 refresh_token"))
+		return
+	}
+	pair, err := h.Logic.Refresh(c.Request.Context(), refreshReq.RefreshToken)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	httpx.OK(c, pair)
 }
 
 func (h *Controller) GetUserInfo(c *gin.Context) {
-	info, err := h.model.GetInfo(c.Request.Context(), auth.UserID(c))
+	info, err := h.Logic.GetInfo(c.Request.Context(), auth.UserID(c))
 	if err != nil {
 		httpx.Fail(c, err)
 		return
@@ -54,8 +69,14 @@ func (h *Controller) GetUserInfo(c *gin.Context) {
 	httpx.OK(c, info)
 }
 
+// Logout 结束当前这条会话，其他设备不受影响
 func (h *Controller) Logout(c *gin.Context) {
-	if err := h.model.Logout(c.Request.Context(), auth.UserID(c)); err != nil {
+	var logoutReq RefreshReq
+	if err := c.ShouldBind(&logoutReq); err != nil || logoutReq.RefreshToken == "" {
+		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "缺少 refresh_token"))
+		return
+	}
+	if err := h.Logic.Logout(c.Request.Context(), logoutReq.RefreshToken); err != nil {
 		httpx.Fail(c, err)
 		return
 	}
@@ -70,7 +91,7 @@ func (h *Controller) UpdateProfile(c *gin.Context) {
 	if err == nil {
 		avatar = file
 	}
-	info, err := h.model.UpdateProfile(c.Request.Context(), auth.UserID(c), profileReq.Nickname, avatar)
+	info, err := h.Logic.UpdateProfile(c.Request.Context(), auth.UserID(c), profileReq.Nickname, avatar)
 	if err != nil {
 		httpx.Fail(c, err)
 		return

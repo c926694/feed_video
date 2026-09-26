@@ -10,11 +10,11 @@ import (
 )
 
 type Controller struct {
-	model *Model
+	Logic *Logic
 }
 
-func NewController(model *Model) *Controller {
-	return &Controller{model: model}
+func NewController(Logic *Logic) *Controller {
+	return &Controller{Logic: Logic}
 }
 
 func (h *Controller) CreateVideo(c *gin.Context) {
@@ -34,7 +34,7 @@ func (h *Controller) CreateVideo(c *gin.Context) {
 		Play:        play,
 		Cover:       cover,
 	}
-	result, err := h.model.CreateVideo(c.Request.Context(), createReq, auth.UserID(c), auth.NickName(c))
+	result, err := h.Logic.CreateVideo(c.Request.Context(), createReq, auth.UserID(c))
 	if err != nil {
 		httpx.Fail(c, err)
 		return
@@ -48,7 +48,7 @@ func (h *Controller) GetVideoInfo(c *gin.Context) {
 		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "视频 ID 不合法"))
 		return
 	}
-	info, err := h.model.GetVideoInfo(c.Request.Context(), videoID, auth.UserID(c))
+	info, err := h.Logic.GetVideoInfo(c.Request.Context(), videoID, auth.UserID(c))
 	if err != nil {
 		httpx.Fail(c, err)
 		return
@@ -62,7 +62,7 @@ func (h *Controller) GetMyVideos(c *gin.Context) {
 		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "limit 参数不合法"))
 		return
 	}
-	list, err := h.model.GetMyVideos(c.Request.Context(), auth.UserID(c), limit)
+	list, err := h.Logic.GetMyVideos(c.Request.Context(), auth.UserID(c), limit)
 	if err != nil {
 		httpx.Fail(c, err)
 		return
@@ -76,7 +76,7 @@ func (h *Controller) DeleteVideos(c *gin.Context) {
 		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "视频 ID 不合法"))
 		return
 	}
-	if err = h.model.DeleteVideo(c.Request.Context(), videoID, auth.UserID(c)); err != nil {
+	if err = h.Logic.DeleteVideo(c.Request.Context(), videoID, auth.UserID(c)); err != nil {
 		httpx.Fail(c, err)
 		return
 	}

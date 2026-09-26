@@ -59,3 +59,4 @@ nginx-1.22.0-web/
 *.dll
 *.so
 *.dylib
+*.pdf

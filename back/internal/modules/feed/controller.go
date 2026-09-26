@@ -11,11 +11,11 @@ import (
 )
 
 type Controller struct {
-	model *Model
+	Logic *Logic
 }
 
-func NewController(model *Model) *Controller {
-	return &Controller{model: model}
+func NewController(Logic *Logic) *Controller {
+	return &Controller{Logic: Logic}
 }
 
 func (h *Controller) GetFeedVideos(c *gin.Context) {
@@ -29,7 +29,7 @@ func (h *Controller) GetFeedVideos(c *gin.Context) {
 		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "limit 参数不合法"))
 		return
 	}
-	list, nextScore, err := h.model.GetFeedVideos(c.Request.Context(), limit, lastScore, auth.UserID(c))
+	list, nextScore, err := h.Logic.GetFeedVideos(c.Request.Context(), limit, lastScore, auth.UserID(c))
 	if err != nil {
 		httpx.Fail(c, err)
 		return
@@ -53,7 +53,7 @@ func (h *Controller) GetFeedHotVideos(c *gin.Context) {
 		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "offset 参数不合法"))
 		return
 	}
-	list, nextOffset, hasMore, err := h.model.GetHotVideos(c.Request.Context(), limit, offset, interval, auth.UserID(c))
+	list, nextOffset, hasMore, err := h.Logic.GetHotVideos(c.Request.Context(), limit, offset, interval, auth.UserID(c))
 	if err != nil {
 		httpx.Fail(c, err)
 		return
@@ -77,7 +77,7 @@ func (h *Controller) GetFollowFeedVideos(c *gin.Context) {
 		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "limit 参数不合法"))
 		return
 	}
-	list, nextScore, err := h.model.GetFollowFeedVideos(c.Request.Context(), limit, lastScore, auth.UserID(c))
+	list, nextScore, err := h.Logic.GetFollowFeedVideos(c.Request.Context(), limit, lastScore, auth.UserID(c))
 	if err != nil {
 		httpx.Fail(c, err)
 		return

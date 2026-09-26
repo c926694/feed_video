@@ -58,8 +58,11 @@ type KafkaConfig struct {
 }
 
 type JWTConfig struct {
-	Secret      string `mapstructure:"secret"`
-	ExpireHours int64  `mapstructure:"expire_hours"`
+	Secret string `mapstructure:"secret"`
+	// AccessMinutes 是 access token 的有效期，也是"登出后旧凭证还能用多久"的上限
+	AccessMinutes int64 `mapstructure:"access_token_minutes"`
+	// RefreshHours 是 refresh token 的有效期，决定用户多久需要重新登录
+	RefreshHours int64 `mapstructure:"refresh_token_hours"`
 }
 
 type UploadConfig struct {

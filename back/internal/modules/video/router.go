@@ -17,10 +17,10 @@ import (
 // Name 模块名，用作消费组的一部分，多个模块订阅同一个 topic 时互不争抢
 const Name = "video"
 
-// NewModel 装配本模块的业务层。自己的数据走 videorepo，
+// NewLogic 装配本模块的业务层。自己的数据走 videorepo，
 // 别人的数据走别人的 repo，依赖全部来自进程级的 ServiceContext
-func NewModel(ctx *svc.ServiceContext) *Model {
-	return &Model{
+func NewLogic(ctx *svc.ServiceContext) *Logic {
+	return &Logic{
 		videos:   videorepo.New(ctx.DB, ctx.Redis),
 		users:    userrepo.New(ctx.DB),
 		likes:    likerepo.New(ctx.Redis),
@@ -31,7 +31,7 @@ func NewModel(ctx *svc.ServiceContext) *Model {
 }
 
 func RegisterHTTP(r *gin.Engine, ctx *svc.ServiceContext) (*gin.Engine, error) {
-	controller := NewController(NewModel(ctx))
+	controller := NewController(NewLogic(ctx))
 	group := r.Group("videos")
 	{
 		group.POST("/create", ctx.Auth.Middleware(), controller.CreateVideo)
@@ -43,14 +43,14 @@ func RegisterHTTP(r *gin.Engine, ctx *svc.ServiceContext) (*gin.Engine, error) {
 }
 
 func RegisterConsumers(sub *consumer.Consumer, ctx *svc.ServiceContext) error {
-	model := NewModel(ctx)
+	moduleLogic := NewLogic(ctx)
 	// 删除视频时清理 OSS 上的文件
 	sub.Subscribe(topic.VideoDeleted, func(handlerCtx context.Context, payload []byte) error {
 		return handleVideoDeleted(handlerCtx, payload, ctx.Upload)
 	})
-	sub.Subscribe(topic.LikeSwitched, model.HandleLikeSwitched)
-	sub.Subscribe(topic.CommentCreated, model.HandleCommentCreated)
-	sub.Subscribe(topic.CommentDeleted, model.HandleCommentDeleted)
-	sub.Subscribe(topic.UserUpdated, model.HandleUserUpdated)
+	sub.Subscribe(topic.LikeSwitched, moduleLogic.HandleLikeSwitched)
+	sub.Subscribe(topic.CommentCreated, moduleLogic.HandleCommentCreated)
+	sub.Subscribe(topic.CommentDeleted, moduleLogic.HandleCommentDeleted)
+	sub.Subscribe(topic.UserUpdated, moduleLogic.HandleUserUpdated)
 	return nil
 }

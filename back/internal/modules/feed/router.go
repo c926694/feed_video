@@ -16,10 +16,10 @@ import (
 // Name 模块名，用作消费组的一部分，多个模块订阅同一个 topic 时互不争抢
 const Name = "feed"
 
-// NewModel 装配本模块的业务层。索引与热度走 feedrepo，
+// NewLogic 装配本模块的业务层。索引与热度走 feedrepo，
 // 视频与用户数据走别人的 repo，依赖全部来自进程级的 ServiceContext
-func NewModel(ctx *svc.ServiceContext) *Model {
-	return &Model{
+func NewLogic(ctx *svc.ServiceContext) *Logic {
+	return &Logic{
 		feed:     feedrepo.New(ctx.Redis),
 		videos:   videorepo.New(ctx.DB, ctx.Redis),
 		users:    userrepo.New(ctx.DB),
@@ -30,7 +30,7 @@ func NewModel(ctx *svc.ServiceContext) *Model {
 }
 
 func RegisterHTTP(r *gin.Engine, ctx *svc.ServiceContext) (*gin.Engine, error) {
-	controller := NewController(NewModel(ctx))
+	controller := NewController(NewLogic(ctx))
 	group := r.Group("videos")
 	{
 		group.GET("/feed", ctx.Auth.Middleware(), controller.GetFeedVideos)
@@ -41,11 +41,11 @@ func RegisterHTTP(r *gin.Engine, ctx *svc.ServiceContext) (*gin.Engine, error) {
 }
 
 func RegisterConsumers(sub *consumer.Consumer, ctx *svc.ServiceContext) error {
-	model := NewModel(ctx)
-	sub.Subscribe(topic.VideoCreated, model.HandleVideoCreated)
-	sub.Subscribe(topic.VideoDeleted, model.HandleVideoDeleted)
-	sub.Subscribe(topic.LikeSwitched, model.HandleLikeSwitched)
-	sub.Subscribe(topic.CommentCreated, model.HandleCommentCreated)
-	sub.Subscribe(topic.CommentDeleted, model.HandleCommentDeleted)
+	moduleLogic := NewLogic(ctx)
+	sub.Subscribe(topic.VideoCreated, moduleLogic.HandleVideoCreated)
+	sub.Subscribe(topic.VideoDeleted, moduleLogic.HandleVideoDeleted)
+	sub.Subscribe(topic.LikeSwitched, moduleLogic.HandleLikeSwitched)
+	sub.Subscribe(topic.CommentCreated, moduleLogic.HandleCommentCreated)
+	sub.Subscribe(topic.CommentDeleted, moduleLogic.HandleCommentDeleted)
 	return nil
 }
