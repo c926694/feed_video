@@ -143,6 +143,7 @@ func main() {
 		{video.Name, video.RegisterConsumers},
 		{comment.Name, comment.RegisterConsumers},
 		{feed.Name, feed.RegisterConsumers},
+		{like.Name, like.RegisterConsumers},
 	}
 	for _, item := range consumerRegistrations {
 		eventConsumer := consumer.New(cfg.Kafka.Brokers, cfg.Kafka.GroupID, item.subscriber, eventProducer)

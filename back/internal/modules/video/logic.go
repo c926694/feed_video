@@ -78,16 +78,22 @@ func (l *Logic) CreateVideo(ctx context.Context, createReq CreateReq, userID uin
 		return CreateRes{}, err
 	}
 
+	// created_at 由数据库生成，Create 后重新查询拿真实时间再发事件
+	created, err := l.videos.GetByID(ctx, item.ID)
+	if err != nil {
+		return CreateRes{}, err
+	}
+
 	// 通知 feed 模块把新视频加进索引
-	if err = l.producer.Publish(ctx, topic.VideoCreated, strconv.FormatUint(item.ID, 10), videoevent.CreatedEvent{
-		VideoID:   item.ID,
-		AuthorID:  item.AuthorID,
-		CreatedAt: item.CreatedAt,
+	if err = l.producer.Publish(ctx, topic.VideoCreated, strconv.FormatUint(created.ID, 10), videoevent.CreatedEvent{
+		VideoID:   created.ID,
+		AuthorID:  created.AuthorID,
+		CreatedAt: created.CreateTime,
 	}); err != nil {
 		return CreateRes{}, err
 	}
 
-	return CreateRes{Id: item.ID, Url: l.uploader.URL(item.PlayURL)}, nil
+	return CreateRes{Id: created.ID, Url: l.uploader.URL(created.PlayURL)}, nil
 }
 
 func (l *Logic) GetMyVideos(ctx context.Context, userID uint64, limit uint64) ([]InfoRes, error) {
@@ -223,7 +229,7 @@ func (l *Logic) toInfoRes(item videorepo.Video) InfoRes {
 		PlayURL:      l.uploader.URL(item.PlayURL),
 		CommentCount: item.CommentCount,
 		LikeCount:    item.LikeCount,
-		CreatedAt:    item.CreatedAt,
+		CreatedAt:    item.CreateTime,
 	}
 }
 

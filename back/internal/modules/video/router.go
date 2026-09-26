@@ -23,7 +23,7 @@ func NewLogic(ctx *svc.ServiceContext) *Logic {
 	return &Logic{
 		videos:   videorepo.New(ctx.DB, ctx.Redis),
 		users:    userrepo.New(ctx.DB),
-		likes:    likerepo.New(ctx.Redis),
+		likes:    likerepo.New(ctx.DB, ctx.Redis),
 		follows:  followrepo.New(ctx.DB, ctx.Redis),
 		producer: ctx.Producer,
 		uploader: ctx.Upload,

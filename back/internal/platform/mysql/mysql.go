@@ -16,7 +16,7 @@ import (
 // Connect 建立 MySQL 连接并设置连接池参数
 func Connect(cfg config.MySQLConfig) (*gorm.DB, error) {
 	dsn := fmt.Sprintf(
-		"%s:%s@tcp(%s:%d)/%s?charset=%s&parseTime=True&loc=Local",
+		"%s:%s@tcp(%s:%d)/%s?charset=%s&parseTime=True&loc=Local&multiStatements=true",
 		cfg.Username,
 		cfg.Password,
 		cfg.Host,

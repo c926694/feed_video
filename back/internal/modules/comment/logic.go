@@ -68,7 +68,7 @@ func (l *Logic) Create(ctx context.Context, userID uint64, createReq CreateReq) 
 		Commenter:       item.Commenter,
 		Content:         item.Content,
 		LikeCount:       item.LikeCount,
-		CreatedAt:       item.CreatedAt,
+		CreatedAt:       item.CreateTime,
 		commenterName:   item.CommenterName,
 		commenterAvatar: item.CommenterAvatar,
 	}}
@@ -109,7 +109,7 @@ func (l *Logic) ListByVideo(ctx context.Context, videoID uint64, userID uint64) 
 			Commenter:       item.Commenter,
 			Content:         item.Content,
 			LikeCount:       item.LikeCount,
-			CreatedAt:       item.CreatedAt,
+			CreatedAt:       item.CreateTime,
 			commenterName:   item.CommenterName,
 			commenterAvatar: item.CommenterAvatar,
 		})

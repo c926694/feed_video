@@ -29,8 +29,8 @@ type Video struct {
 	Description  string    `gorm:"type:text"`
 	LikeCount    int64     `gorm:"default:0"`
 	CommentCount int64     `gorm:"default:0"`
-	CreatedAt    time.Time `gorm:"index" gorm:"autoCreateTime;not null"`
-	UpdatedAt    time.Time `json:"updated_at" gorm:"autoUpdateTime;not null"`
+	CreateTime   time.Time `gorm:"column:created_at;default:CURRENT_TIMESTAMP(3)" json:"created_at"`
+	UpdateTime   time.Time `gorm:"column:updated_at;default:CURRENT_TIMESTAMP(3)" json:"updated_at"`
 }
 
 // InfoCacheEntry 视频信息缓存里的一条记录

@@ -20,7 +20,7 @@ func NewLogic(ctx *svc.ServiceContext) *Logic {
 	return &Logic{
 		comments: commentrepo.New(ctx.DB),
 		users:    userrepo.New(ctx.DB),
-		likes:    likerepo.New(ctx.Redis),
+		likes:    likerepo.New(ctx.DB, ctx.Redis),
 		producer: ctx.Producer,
 		uploader: ctx.Upload,
 	}

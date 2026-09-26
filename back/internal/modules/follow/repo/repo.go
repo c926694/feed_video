@@ -17,7 +17,7 @@ type Follow struct {
 	ID        uint64    `gorm:"primaryKey" json:"id"`
 	Following uint64    `gorm:"not null;uniqueIndex:idx_user_follow" json:"user_id"`
 	Follower  uint64    `gorm:"not null;uniqueIndex:idx_user_follow" json:"follow_user_id"`
-	CreatedAt time.Time `json:"created_at" gorm:"autoCreateTime;not null"`
+	CreateTime time.Time `gorm:"column:created_at;default:CURRENT_TIMESTAMP(3)" json:"created_at"`
 }
 
 // Repo 关注关系的读写，集合在 Redis，关系表在 MySQL

@@ -223,7 +223,7 @@ func (l *Logic) assemble(ctx context.Context, items []videorepo.Video, userID ui
 			PlayURL:      l.uploader.URL(item.PlayURL),
 			LikeCount:    item.LikeCount,
 			CommentCount: item.CommentCount,
-			CreatedAt:    item.CreatedAt,
+			CreatedAt:    item.CreateTime,
 		}
 		videoIDs[i] = item.ID
 		if item.AuthorID != 0 && !seen[item.AuthorID] {

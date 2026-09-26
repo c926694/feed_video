@@ -16,8 +16,8 @@ type Comment struct {
 	VideoID         uint64    `gorm:"index;not null"`
 	Content         string    `gorm:"size:500;not null"`
 	LikeCount       int64     `gorm:"default:0"`
-	CreatedAt       time.Time `gorm:"autoCreateTime;not null"`
-	UpdatedAt       time.Time `gorm:" autoUpdateTime;not null"`
+	CreateTime      time.Time `gorm:"column:created_at;default:CURRENT_TIMESTAMP(3)" json:"created_at"`
+	UpdateTime      time.Time `gorm:"column:updated_at;default:CURRENT_TIMESTAMP(3)" json:"updated_at"`
 }
 
 // Repo comment 表的读写

@@ -3,8 +3,11 @@ package repo
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/redis/go-redis/v9"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const (
@@ -12,13 +15,28 @@ const (
 	commentLikeKey = "like:comment:%d"
 )
 
-// Repo 点赞数据的读写，点赞状态只存在 Redis 集合里
+// Repo 点赞数据的读写。集合在 Redis，关系表在 MySQL。
 type Repo struct {
+	db          *gorm.DB
 	redisClient *redis.Client
 }
 
-func New(redisClient *redis.Client) *Repo {
-	return &Repo{redisClient: redisClient}
+func New(db *gorm.DB, redisClient *redis.Client) *Repo {
+	return &Repo{db: db, redisClient: redisClient}
+}
+
+// Like user_like 表，target_type 取值 video / comment
+type Like struct {
+	ID         uint64    `gorm:"primaryKey"`
+	UserID     uint64    `gorm:"column:user_id;not null"`
+	TargetType string    `gorm:"column:target_type;size:16;not null"`
+	TargetID   uint64    `gorm:"column:target_id;not null"`
+	CreateTime time.Time `gorm:"column:created_at;default:CURRENT_TIMESTAMP(3)" json:"created_at"`
+}
+
+// TableName 返回 user_like，避免使用 SQL 保留字 like
+func (Like) TableName() string {
+	return "user_like"
 }
 
 var switchScript = redis.NewScript(`
@@ -78,4 +96,29 @@ func keyFor(target string, targetID uint64) string {
 		return fmt.Sprintf(commentLikeKey, targetID)
 	}
 	return fmt.Sprintf(videoLikeKey, targetID)
+}
+
+// Create 写入一条点赞关系，冲突时忽略，保证事件重放幂等
+func (r *Repo) Create(ctx context.Context, userID uint64, targetType string, targetID uint64) error {
+	return r.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).
+		Create(&Like{UserID: userID, TargetType: targetType, TargetID: targetID}).Error
+}
+
+// Delete 删除一条点赞关系，本身幂等
+func (r *Repo) Delete(ctx context.Context, userID uint64, targetType string, targetID uint64) error {
+	return r.db.WithContext(ctx).
+		Where("user_id = ? AND target_type = ? AND target_id = ?", userID, targetType, targetID).
+		Delete(&Like{}).Error
+}
+
+// DeleteByTarget 删除某个目标下的全部点赞，删除视频或评论时清理
+func (r *Repo) DeleteByTarget(ctx context.Context, targetType string, targetID uint64) error {
+	return r.db.WithContext(ctx).
+		Where("target_type = ? AND target_id = ?", targetType, targetID).
+		Delete(&Like{}).Error
+}
+
+// DeleteTargetSet 删除某个目标的点赞集合，删除视频或评论时清理
+func (r *Repo) DeleteTargetSet(ctx context.Context, target string, targetID uint64) error {
+	return r.redisClient.Del(ctx, keyFor(target, targetID)).Err()
 }
