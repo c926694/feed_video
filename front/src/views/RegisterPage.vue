@@ -47,8 +47,12 @@ async function handleRegister() {
     await registerUser(form);
     showToast("注册成功");
     router.push("/login");
-  } catch {
-    // 错误提示已由 http 拦截器统一弹出
+  } catch (error) {
+    // 409 冲突由页面提示，其余错误已由 http 拦截器统一弹出
+    const envelope = (error as { envelope?: { code?: number; msg?: string } }).envelope;
+    if (envelope?.code === 40900) {
+      showToast(envelope.msg ?? "用户名已存在");
+    }
   } finally {
     loading.value = false;
   }

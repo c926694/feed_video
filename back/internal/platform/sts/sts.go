@@ -26,7 +26,7 @@ type Service struct {
 
 // New 创建 STS 服务，RAM 配置缺失时返回 nil 表示直传未启用
 func New(cfg config.RAMConfig) *Service {
-	if cfg.Endpoint == "" || cfg.RoleArn == "" || cfg.AccessKeyID == "" || cfg.AccessKeySecret == "" {
+	if cfg.RegionId == "" || cfg.RoleArn == "" || cfg.AccessKeyID == "" || cfg.AccessKeySecret == "" {
 		return nil
 	}
 	return &Service{cfg: cfg}
@@ -34,7 +34,7 @@ func New(cfg config.RAMConfig) *Service {
 
 // Assume 签发临时凭证，权限范围由 RAM 角色策略控制
 func (s *Service) Assume(ctx context.Context) (*Credential, error) {
-	client, err := stsclient.NewClientWithAccessKey(s.cfg.Endpoint, s.cfg.AccessKeyID, s.cfg.AccessKeySecret)
+	client, err := stsclient.NewClientWithAccessKey(s.cfg.RegionId, s.cfg.AccessKeyID, s.cfg.AccessKeySecret)
 	if err != nil {
 		return nil, fmt.Errorf("创建 STS 客户端失败: %w", err)
 	}

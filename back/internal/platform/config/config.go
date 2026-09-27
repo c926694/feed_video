@@ -87,7 +87,7 @@ type OSSConfig struct {
 
 // RAMConfig 直传 STS 临时凭证签发配置
 type RAMConfig struct {
-	Endpoint        string `mapstructure:"endpoint"`
+	RegionId        string `mapstructure:"region_id"`
 	AccessKeyID     string `mapstructure:"access_key_id"`
 	AccessKeySecret string `mapstructure:"access_key_secret"`
 	RoleArn         string `mapstructure:"role_arn"`

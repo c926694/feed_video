@@ -2,6 +2,8 @@ package video
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -53,7 +55,8 @@ type Logic struct {
 	sts      *sts.Service
 }
 
-// CreateVideo 创建发布记录，状态为上传中，不发事件。文件由前端直传 OSS。
+// CreateVideo 创建发布记录，状态为已创建，不发事件。文件由前端直传 OSS。
+// 带请求 ID 的重复提交返回冲突错误并带上已创建的记录。
 func (l *Logic) CreateVideo(ctx context.Context, createReq CreateReq, userID uint64) (CreateRes, error) {
 	if err := validateUploadKey(upload.Cover, createReq.CoverKey, userID); err != nil {
 		return CreateRes{}, err
@@ -68,6 +71,14 @@ func (l *Logic) CreateVideo(ctx context.Context, createReq CreateReq, userID uin
 		return CreateRes{}, err
 	}
 
+	requestID := createReq.RequestId
+	if requestID == "" {
+		// 未带请求 ID 时不参与判重，生成随机值占位
+		if requestID, err = randomRequestID(); err != nil {
+			return CreateRes{}, err
+		}
+	}
+
 	item := videorepo.Video{
 		Title:        createReq.Title,
 		Description:  createReq.Description,
@@ -77,11 +88,29 @@ func (l *Logic) CreateVideo(ctx context.Context, createReq CreateReq, userID uin
 		PlayURL:      createReq.PlayKey,
 		CoverURL:     createReq.CoverKey,
 		Status:       videorepo.StatusCreated,
+		RequestID:    requestID,
 	}
 	if err = l.videos.Create(ctx, &item); err != nil {
+		if errors.Is(err, gorm.ErrDuplicatedKey) {
+			// 重复创建：返回冲突错误并带上已创建的记录
+			existing, getErr := l.videos.GetByRequestID(ctx, userID, requestID)
+			if getErr != nil {
+				return CreateRes{}, getErr
+			}
+			return CreateRes{Id: existing.ID, Status: existing.Status}, httpx.New(httpx.CodeConflict, "该发布记录已创建，禁止重复创建")
+		}
 		return CreateRes{}, err
 	}
 	return CreateRes{Id: item.ID, Status: item.Status}, nil
+}
+
+// randomRequestID 生成随机请求 ID，占位不参与判重
+func randomRequestID() (string, error) {
+	raw := make([]byte, 16)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(raw), nil
 }
 
 // UploadCredential 签发直传凭证并生成存储路径

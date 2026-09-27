@@ -8,6 +8,7 @@ type CreateReq struct {
 	Description string `json:"description"`
 	CoverKey    string `json:"cover_key"`
 	PlayKey     string `json:"play_key"`
+	RequestId   string `json:"request_id"`
 }
 
 // CreateRes 创建发布记录响应

@@ -37,6 +37,7 @@ type Video struct {
 	LikeCount    int64     `gorm:"default:0"`
 	CommentCount int64     `gorm:"default:0"`
 	Status       string    `gorm:"column:status;size:16;not null;default:published"`
+	RequestID    string    `gorm:"column:request_id;size:64"`
 	CreateTime   time.Time `gorm:"column:created_at;default:CURRENT_TIMESTAMP(3)" json:"created_at"`
 	UpdateTime   time.Time `gorm:"column:updated_at;default:CURRENT_TIMESTAMP(3)" json:"updated_at"`
 }
@@ -81,6 +82,15 @@ func (r *Repo) Create(ctx context.Context, item *Video) error {
 func (r *Repo) GetByID(ctx context.Context, videoID uint64) (*Video, error) {
 	var item Video
 	if err := r.db.WithContext(ctx).Where("id = ?", videoID).First(&item).Error; err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
+// GetByRequestID 按请求 ID 查作者的发布记录，用于重复创建判重
+func (r *Repo) GetByRequestID(ctx context.Context, authorID uint64, requestID string) (*Video, error) {
+	var item Video
+	if err := r.db.WithContext(ctx).Where("author_id = ? AND request_id = ?", authorID, requestID).First(&item).Error; err != nil {
 		return nil, err
 	}
 	return &item, nil

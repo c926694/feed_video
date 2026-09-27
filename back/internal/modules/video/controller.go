@@ -1,6 +1,7 @@
 package video
 
 import (
+	"errors"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -32,7 +33,7 @@ func (h *Controller) UploadCredential(c *gin.Context) {
 	httpx.OK(c, result)
 }
 
-// CreateVideo 创建发布记录，文件由前端直传 OSS
+// CreateVideo 创建发布记录，文件由前端直传 OSS。重复提交返回冲突并带上已创建的记录。
 func (h *Controller) CreateVideo(c *gin.Context) {
 	var createReq CreateReq
 	if err := c.ShouldBind(&createReq); err != nil {
@@ -41,6 +42,11 @@ func (h *Controller) CreateVideo(c *gin.Context) {
 	}
 	result, err := h.Logic.CreateVideo(c.Request.Context(), createReq, auth.UserID(c))
 	if err != nil {
+		var appErr *httpx.AppError
+		if errors.As(err, &appErr) && appErr.Code == httpx.CodeConflict {
+			httpx.FailWithData(c, err, result)
+			return
+		}
 		httpx.Fail(c, err)
 		return
 	}

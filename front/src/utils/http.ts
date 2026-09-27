@@ -26,8 +26,12 @@ http.interceptors.response.use(
     const envelope = response.data as ApiEnvelope;
     if (typeof envelope?.code === "number" && envelope.code !== 0) {
       const msg = envelope.msg ?? "请求失败";
-      showToast(msg);
-      return Promise.reject(new Error(msg));
+      if (envelope.code !== 40900) {
+        showToast(msg);
+      }
+      const error = new Error(msg) as Error & { envelope?: ApiEnvelope };
+      error.envelope = envelope;
+      return Promise.reject(error);
     }
     return response;
   },

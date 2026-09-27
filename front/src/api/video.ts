@@ -1,6 +1,6 @@
 import { http } from "@/utils/http";
 import { normalizeVideo, unwrapData } from "@/utils/normalize";
-import type { RawVideo } from "@/types/backend";
+import type { ApiEnvelope, RawVideo } from "@/types/backend";
 import type { Video } from "@/types/domain";
 
 interface FeedParams {
@@ -116,16 +116,27 @@ export async function fetchUploadCredential(payload: { coverExt: string; playExt
   return credentialOf(unwrapData<unknown>(data));
 }
 
-// 创建发布记录，状态为已创建
-export async function createVideo(payload: { title: string; description: string; coverKey: string; playKey: string }) {
-  const { data } = await http.post("/videos", {
-    title: payload.title,
-    description: payload.description,
-    cover_key: payload.coverKey,
-    play_key: payload.playKey
-  });
-  const body = unwrapData<{ id: number; status: string }>(data);
-  return { id: body.id, status: body.status };
+// 创建发布记录，状态为已创建。重复提交时返回已创建的记录，流程可以继续。
+export async function createVideo(payload: { title: string; description: string; coverKey: string; playKey: string; requestId: string }) {
+  try {
+    const { data } = await http.post("/videos", {
+      title: payload.title,
+      description: payload.description,
+      cover_key: payload.coverKey,
+      play_key: payload.playKey,
+      request_id: payload.requestId
+    });
+    const body = unwrapData<{ id: number; status: string }>(data);
+    return { id: body.id, status: body.status };
+  } catch (error) {
+    const envelope = (error as { envelope?: ApiEnvelope }).envelope;
+    if (envelope?.code === 40900 && envelope.data) {
+      // 重复创建：把已创建的记录当作创建结果继续
+      const body = envelope.data as { id: number; status: string };
+      return { id: body.id, status: body.status };
+    }
+    throw error;
+  }
 }
 
 // 更新发布状态：published 发布完成、failed 标记失败、created 重试。

@@ -122,6 +122,7 @@ export async function startUpload(input: { title: string; description: string; c
   if (input.playFile.size > VIDEO_MAX_SIZE) {
     throw new Error("视频不能超过 10GB");
   }
+  const requestId = crypto.randomUUID();
   const credential = await fetchUploadCredential({
     coverExt: extOf(input.coverFile.name),
     playExt: extOf(input.playFile.name)
@@ -130,7 +131,8 @@ export async function startUpload(input: { title: string; description: string; c
     title: input.title,
     description: input.description,
     coverKey: credential.coverKey,
-    playKey: credential.playKey
+    playKey: credential.playKey,
+    requestId
   });
   const task: UploadTask = {
     videoId: created.id,
