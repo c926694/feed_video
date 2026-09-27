@@ -1,11 +1,11 @@
-import axios, { type AxiosError } from "axios";
-import { getToken } from "@/utils/storage";
+import axios, { type AxiosError, type InternalAxiosRequestConfig } from "axios";
+import { getRefreshToken, getToken } from "@/utils/storage";
 import { useAuth } from "@/composables/useAuth";
 import { useToast } from "@/composables/useToast";
 import type { ApiEnvelope } from "@/types/backend";
 
 const { showToast } = useToast();
-const { clearAuth } = useAuth();
+const { clearAuth, setAuth } = useAuth();
 
 export const http = axios.create({
   baseURL: "/api",
@@ -19,6 +19,44 @@ http.interceptors.request.use((config) => {
   }
   return config;
 });
+
+// runRefresh 用 refresh token 换一对新令牌。这里用裸 axios 绕开本实例的拦截器，避免递归。
+async function runRefresh(): Promise<boolean> {
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) return false;
+  try {
+    const { data } = await axios.post("/api/users/refresh", { refresh_token: refreshToken });
+    const envelope = data as ApiEnvelope<unknown>;
+    const body = (envelope?.data ?? {}) as Record<string, unknown>;
+    const accessToken = String(body.access_token ?? "");
+    const nextRefreshToken = String(body.refresh_token ?? "");
+    if (!accessToken || !nextRefreshToken) return false;
+    setAuth({ accessToken, refreshToken: nextRefreshToken });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// 并发请求同时 401 时共享同一次刷新，避免旧 refresh token 被重复使用
+let refreshPromise: Promise<boolean> | null = null;
+
+function refreshOnce(): Promise<boolean> {
+  if (!refreshPromise) {
+    refreshPromise = runRefresh().finally(() => {
+      refreshPromise = null;
+    });
+  }
+  return refreshPromise;
+}
+
+function redirectToLogin(msg: string) {
+  clearAuth();
+  showToast(msg);
+  if (window.location.pathname !== "/login") {
+    window.location.href = "/login";
+  }
+}
 
 http.interceptors.response.use(
   (response) => {
@@ -35,18 +73,23 @@ http.interceptors.response.use(
     }
     return response;
   },
-  (error: AxiosError<ApiEnvelope>) => {
+  async (error: AxiosError<ApiEnvelope>) => {
     const status = error.response?.status;
-    const msg = error.response?.data?.msg;
-    if (status === 401) {
-      clearAuth();
-      showToast(msg ?? "登录已失效，请重新登录");
-      if (window.location.pathname !== "/login") {
-        window.location.href = "/login";
+    const config = error.config as (InternalAxiosRequestConfig & { retried?: boolean }) | undefined;
+    // access token 过期：先刷新再重放原请求，刷新失败才登出
+    if (status === 401 && config && !config.retried && !config.url?.includes("/users/refresh")) {
+      config.retried = true;
+      if (await refreshOnce()) {
+        return http.request(config);
       }
-    } else {
-      showToast(msg ?? error.message);
+      redirectToLogin(error.response?.data?.msg ?? "登录已失效，请重新登录");
+      return Promise.reject(error);
     }
+    if (status === 401) {
+      redirectToLogin(error.response?.data?.msg ?? "登录已失效，请重新登录");
+      return Promise.reject(error);
+    }
+    showToast(error.response?.data?.msg ?? error.message);
     return Promise.reject(error);
   }
 );

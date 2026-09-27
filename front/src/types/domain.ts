@@ -9,6 +9,11 @@ export interface User {
   videoCount: number;
 }
 
+export interface TokenPair {
+  accessToken: string;
+  refreshToken: string;
+}
+
 export interface Video {
   id: number;
   title: string;

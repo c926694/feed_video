@@ -1,29 +1,42 @@
 import { computed, ref } from "vue";
-import { clearToken, getToken, setToken } from "@/utils/storage";
-import type { User } from "@/types/domain";
+import {
+  clearRefreshToken,
+  clearToken,
+  getRefreshToken,
+  getToken,
+  setRefreshToken,
+  setToken
+} from "@/utils/storage";
+import type { TokenPair, User } from "@/types/domain";
 
 const token = ref(getToken());
+const refreshToken = ref(getRefreshToken());
 const currentUser = ref<User | null>(null);
 
 export function useAuth() {
   const isLoggedIn = computed(() => Boolean(token.value));
 
-  const setAuthToken = (nextToken: string) => {
-    token.value = nextToken;
-    setToken(nextToken);
+  const setAuth = (pair: TokenPair) => {
+    token.value = pair.accessToken;
+    refreshToken.value = pair.refreshToken;
+    setToken(pair.accessToken);
+    setRefreshToken(pair.refreshToken);
   };
 
   const clearAuth = () => {
     token.value = "";
+    refreshToken.value = "";
     currentUser.value = null;
     clearToken();
+    clearRefreshToken();
   };
 
   return {
     token,
+    refreshToken,
     currentUser,
     isLoggedIn,
-    setAuthToken,
+    setAuth,
     clearAuth
   };
 }

@@ -42,7 +42,7 @@ import type { User, Video } from "@/types/domain";
 import { useToast } from "@/composables/useToast";
 
 const router = useRouter();
-const { clearAuth } = useAuth();
+const { clearAuth, refreshToken } = useAuth();
 const { showToast } = useToast();
 
 const currentUser = ref<User | null>(null);
@@ -124,7 +124,7 @@ async function onSaveProfile() {
 
 async function onLogout() {
   try {
-    await logout();
+    await logout(refreshToken.value);
     showToast("已退出登录");
   } catch {
     // 错误提示已由 http 拦截器统一弹出
