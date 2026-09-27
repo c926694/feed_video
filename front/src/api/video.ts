@@ -15,6 +15,18 @@ interface HotFeedParams {
   interval?: number;
 }
 
+// 直传凭证
+export interface UploadCredential {
+  accessKeyId: string;
+  accessKeySecret: string;
+  securityToken: string;
+  expiration: number;
+  region: string;
+  bucket: string;
+  coverKey: string;
+  playKey: string;
+}
+
 function pickVideoList(source: unknown): RawVideo[] {
   if (Array.isArray(source)) return source as RawVideo[];
   if (!source || typeof source !== "object") return [];
@@ -22,6 +34,20 @@ function pickVideoList(source: unknown): RawVideo[] {
   const candidates = [payload.list, payload.items, payload.videos, payload.video_list, payload.feed_video_list];
   const found = candidates.find((entry) => Array.isArray(entry));
   return (found as RawVideo[] | undefined) ?? [];
+}
+
+function credentialOf(body: unknown): UploadCredential {
+  const payload = typeof body === "object" && body ? (body as Record<string, unknown>) : {};
+  return {
+    accessKeyId: String(payload.access_key_id ?? ""),
+    accessKeySecret: String(payload.access_key_secret ?? ""),
+    securityToken: String(payload.security_token ?? ""),
+    expiration: Number(payload.expiration ?? 0),
+    region: String(payload.region ?? ""),
+    bucket: String(payload.bucket ?? ""),
+    coverKey: String(payload.cover_key ?? ""),
+    playKey: String(payload.play_key ?? "")
+  };
 }
 
 export async function fetchFeedVideos(params: FeedParams = {}) {
@@ -81,13 +107,34 @@ async function fetchFeedByPath(path: string, params: FeedParams = {}) {
   };
 }
 
-export async function createVideo(payload: { title: string; description: string; cover: File; play: File }) {
-  const formData = new FormData();
-  formData.append("title", payload.title);
-  formData.append("description", payload.description);
-  formData.append("cover", payload.cover);
-  formData.append("play", payload.play);
-  await http.post("/videos/create", formData);
+// 拿直传凭证，后端生成封面与视频的存储路径
+export async function fetchUploadCredential(payload: { coverExt: string; playExt: string }): Promise<UploadCredential> {
+  const { data } = await http.post("/videos/upload-credential", {
+    cover_ext: payload.coverExt,
+    play_ext: payload.playExt
+  });
+  return credentialOf(unwrapData<unknown>(data));
+}
+
+// 创建发布记录，状态为已创建
+export async function createVideo(payload: { title: string; description: string; coverKey: string; playKey: string }) {
+  const { data } = await http.post("/videos", {
+    title: payload.title,
+    description: payload.description,
+    cover_key: payload.coverKey,
+    play_key: payload.playKey
+  });
+  const body = unwrapData<{ id: number; status: string }>(data);
+  return { id: body.id, status: body.status };
+}
+
+// 更新发布状态：published 发布完成、failed 标记失败、created 重试。
+// created 时返回该视频的存储路径与新凭证，其余返回 null。
+export async function updateVideoStatus(videoId: number, status: "published" | "failed" | "created"): Promise<UploadCredential | null> {
+  const { data } = await http.put(`/videos/${videoId}`, { status });
+  const body = unwrapData<unknown>(data);
+  if (!body) return null;
+  return credentialOf(body);
 }
 
 export async function deleteVideo(videoId: number) {

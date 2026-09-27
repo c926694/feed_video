@@ -45,6 +45,7 @@ export interface RawVideo {
   is_favorite?: boolean;
   is_liked?: boolean;
   is_follow?: boolean;
+  status?: string;
   author?: RawUser;
   user?: RawUser;
   author_name?: string;

@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -19,10 +21,12 @@ import (
 	userrepo "simple_tiktok/internal/modules/user/repo"
 	videoevent "simple_tiktok/internal/modules/video/event"
 	videorepo "simple_tiktok/internal/modules/video/repo"
+	"simple_tiktok/internal/pkg/constants"
 	"simple_tiktok/internal/platform/httpx"
 	"simple_tiktok/internal/platform/kafka/consumer"
 	"simple_tiktok/internal/platform/kafka/producer"
 	"simple_tiktok/internal/platform/kafka/topic"
+	"simple_tiktok/internal/platform/sts"
 	"simple_tiktok/internal/platform/upload"
 )
 
@@ -32,6 +36,9 @@ const (
 	infoRebuildLockTTL = 10 * time.Second
 	infoMissRetryTimes = 8
 	infoMissRetrySleep = 30 * time.Millisecond
+
+	coverMaxSize = 10 << 20 // 封面最大 10MB
+	videoMaxSize = 10 << 30 // 视频最大 10GB
 )
 
 // Logic 视频模块的业务逻辑
@@ -43,24 +50,21 @@ type Logic struct {
 	follows  *followrepo.Repo
 	producer *producer.Producer
 	uploader *upload.Uploader
+	sts      *sts.Service
 }
 
+// CreateVideo 创建发布记录，状态为上传中，不发事件。文件由前端直传 OSS。
 func (l *Logic) CreateVideo(ctx context.Context, createReq CreateReq, userID uint64) (CreateRes, error) {
+	if err := validateUploadKey(upload.Cover, createReq.CoverKey, userID); err != nil {
+		return CreateRes{}, err
+	}
+	if err := validateUploadKey(upload.Video, createReq.PlayKey, userID); err != nil {
+		return CreateRes{}, err
+	}
+
 	// 作者展示字段来自 user 表，不取令牌里的昵称，避免改昵称之后显示成旧值
 	user, err := l.users.GetByID(ctx, userID)
 	if err != nil {
-		return CreateRes{}, err
-	}
-
-	coverPath, err := l.uploader.Save(createReq.Cover, upload.Cover)
-	if err != nil {
-		return CreateRes{}, err
-	}
-	playPath, err := l.uploader.Save(createReq.Play, upload.Video)
-	if err != nil {
-		if deleteErr := l.uploader.Delete(upload.Cover, coverPath); deleteErr != nil {
-			return CreateRes{}, deleteErr
-		}
 		return CreateRes{}, err
 	}
 
@@ -70,32 +74,166 @@ func (l *Logic) CreateVideo(ctx context.Context, createReq CreateReq, userID uin
 		AuthorID:     userID,
 		AuthorName:   user.NickName,
 		AuthorAvatar: user.AvatarURL,
-		PlayURL:      playPath,
-		CoverURL:     coverPath,
+		PlayURL:      createReq.PlayKey,
+		CoverURL:     createReq.CoverKey,
+		Status:       videorepo.StatusCreated,
 	}
 	if err = l.videos.Create(ctx, &item); err != nil {
-		if deleteErr := l.uploader.Delete(upload.Video, playPath); deleteErr != nil {
-			return CreateRes{}, deleteErr
-		}
 		return CreateRes{}, err
 	}
+	return CreateRes{Id: item.ID, Status: item.Status}, nil
+}
 
-	// created_at 由数据库生成，Create 后重新查询拿真实时间再发事件
-	created, err := l.videos.GetByID(ctx, item.ID)
+// UploadCredential 签发直传凭证并生成存储路径
+func (l *Logic) UploadCredential(ctx context.Context, userID uint64, credentialReq CredentialReq) (*CredentialRes, error) {
+	if l.sts == nil {
+		return nil, httpx.New(httpx.CodeInternal, "直传服务未配置")
+	}
+	coverKey, err := l.uploader.BuildKey(upload.Cover, userID, credentialReq.CoverExt)
 	if err != nil {
-		return CreateRes{}, err
+		return nil, err
 	}
-
-	// 通知 feed 模块把新视频加进索引
-	if err = l.producer.Publish(ctx, topic.VideoCreated, strconv.FormatUint(created.ID, 10), videoevent.CreatedEvent{
-		VideoID:   created.ID,
-		AuthorID:  created.AuthorID,
-		CreatedAt: created.CreateTime,
-	}); err != nil {
-		return CreateRes{}, err
+	playKey, err := l.uploader.BuildKey(upload.Video, userID, credentialReq.PlayExt)
+	if err != nil {
+		return nil, err
 	}
+	return l.buildCredential(ctx, coverKey, playKey)
+}
 
-	return CreateRes{Id: created.ID, Url: l.uploader.URL(created.PlayURL)}, nil
+// buildCredential 签发直传凭证并组装响应
+func (l *Logic) buildCredential(ctx context.Context, coverKey string, playKey string) (*CredentialRes, error) {
+	credential, err := l.sts.Assume(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &CredentialRes{
+		AccessKeyID:     credential.AccessKeyID,
+		AccessKeySecret: credential.AccessKeySecret,
+		SecurityToken:   credential.SecurityToken,
+		Expiration:      credential.Expiration.Unix(),
+		Region:          l.uploader.Region(),
+		Bucket:          l.uploader.BucketName(),
+		CoverKey:        coverKey,
+		PlayKey:         playKey,
+	}, nil
+}
+
+// UpdateStatus 更新发布状态：published 发布完成、failed 标记失败、created 重试
+func (l *Logic) UpdateStatus(ctx context.Context, videoID uint64, userID uint64, status string) (*CredentialRes, error) {
+	switch status {
+	case videorepo.StatusPublished:
+		if err := l.publish(ctx, videoID, userID); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	case videorepo.StatusFailed:
+		if _, err := l.markStatus(ctx, videoID, userID, videorepo.StatusCreated, videorepo.StatusFailed); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	case videorepo.StatusCreated:
+		if l.sts == nil {
+			return nil, httpx.New(httpx.CodeInternal, "直传服务未配置")
+		}
+		item, err := l.markStatus(ctx, videoID, userID, videorepo.StatusFailed, videorepo.StatusCreated)
+		if err != nil {
+			return nil, err
+		}
+		return l.buildCredential(ctx, item.CoverURL, item.PlayURL)
+	default:
+		return nil, httpx.New(httpx.CodeBadRequest, "状态取值不合法")
+	}
+}
+
+// publish 发布完成：校验对象存在与大小，把 created 迁移到 published 并发出事件
+func (l *Logic) publish(ctx context.Context, videoID uint64, userID uint64) error {
+	item, err := l.getOwnVideo(ctx, videoID, userID, "只能发布自己的视频")
+	if err != nil {
+		return err
+	}
+	playSize, err := l.uploader.Head(upload.Video, item.PlayURL)
+	if err != nil {
+		return httpx.New(httpx.CodeBadRequest, "视频文件还没上传完成")
+	}
+	if playSize <= 0 {
+		return httpx.New(httpx.CodeBadRequest, "视频文件为空")
+	}
+	if playSize > videoMaxSize {
+		return httpx.New(httpx.CodeBadRequest, "视频不能超过 10GB")
+	}
+	coverSize, err := l.uploader.Head(upload.Cover, item.CoverURL)
+	if err != nil {
+		return httpx.New(httpx.CodeBadRequest, "封面还没上传完成")
+	}
+	if coverSize > coverMaxSize {
+		return httpx.New(httpx.CodeBadRequest, "封面不能超过 10MB")
+	}
+	migrated, err := l.videos.MarkStatus(ctx, videoID, userID, videorepo.StatusCreated, videorepo.StatusPublished)
+	if err != nil {
+		return err
+	}
+	if !migrated {
+		// 已经发布过，幂等返回成功，不重复发事件
+		return nil
+	}
+	return l.producer.Publish(ctx, topic.VideoCreated, strconv.FormatUint(videoID, 10), videoevent.CreatedEvent{
+		VideoID:   videoID,
+		AuthorID:  userID,
+		CreatedAt: item.CreateTime,
+	})
+}
+
+// markStatus 校验归属后做状态迁移，返回迁移前的记录，迁移幂等
+func (l *Logic) markStatus(ctx context.Context, videoID uint64, userID uint64, from string, to string) (*videorepo.Video, error) {
+	item, err := l.getOwnVideo(ctx, videoID, userID, "只能操作自己的视频")
+	if err != nil {
+		return nil, err
+	}
+	if _, err = l.videos.MarkStatus(ctx, videoID, userID, from, to); err != nil {
+		return nil, err
+	}
+	return item, nil
+}
+
+// getOwnVideo 查视频并校验属于当前用户
+func (l *Logic) getOwnVideo(ctx context.Context, videoID uint64, userID uint64, forbiddenMsg string) (*videorepo.Video, error) {
+	item, err := l.videos.GetByID(ctx, videoID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, httpx.New(httpx.CodeNotFound, "视频不存在")
+		}
+		return nil, err
+	}
+	if item.AuthorID != userID {
+		return nil, httpx.New(httpx.CodeForbidden, forbiddenMsg)
+	}
+	return item, nil
+}
+
+// validateUploadKey 校验直传 key 的目录前缀与用户归属
+func validateUploadKey(sourceType upload.SourceType, key string, userID uint64) error {
+	prefix := ""
+	switch sourceType {
+	case upload.Cover:
+		prefix = constants.CoverPrefix
+	case upload.Video:
+		prefix = constants.VideoPrefix
+	default:
+		return fmt.Errorf("不支持的上传类型 %s", sourceType)
+	}
+	if !strings.HasPrefix(key, prefix) {
+		return httpx.New(httpx.CodeBadRequest, "存储路径不合法")
+	}
+	rest := strings.TrimPrefix(key, prefix)
+	parts := strings.SplitN(rest, "/", 2)
+	if len(parts) != 2 || parts[1] == "" {
+		return httpx.New(httpx.CodeBadRequest, "存储路径不合法")
+	}
+	owner, err := strconv.ParseUint(parts[0], 10, 64)
+	if err != nil || owner != userID {
+		return httpx.New(httpx.CodeBadRequest, "存储路径不合法")
+	}
+	return nil
 }
 
 func (l *Logic) GetMyVideos(ctx context.Context, userID uint64, limit uint64) ([]InfoRes, error) {
@@ -122,6 +260,9 @@ func (l *Logic) GetVideoInfo(ctx context.Context, videoID uint64, userID uint64)
 		return InfoRes{}, err
 	}
 	if !exists {
+		return InfoRes{}, httpx.New(httpx.CodeNotFound, "视频不存在")
+	}
+	if info.Status != videorepo.StatusPublished {
 		return InfoRes{}, httpx.New(httpx.CodeNotFound, "视频不存在")
 	}
 	list := []InfoRes{info}
@@ -152,7 +293,18 @@ func (l *Logic) DeleteVideo(ctx context.Context, videoID uint64, userID uint64) 
 		slog.Error("清理视频信息缓存失败", "video_id", videoID, "error", err)
 	}
 
-	// video 自己删物理文件，comment 删评论，feed 清索引
+	if item.Status != videorepo.StatusPublished {
+		// 未发布过：没有事件订阅方需要清理，同步清掉可能已上传的对象
+		if deleteErr := l.uploader.Delete(upload.Video, item.PlayURL); deleteErr != nil {
+			slog.Error("清理视频文件失败", "video_id", videoID, "error", deleteErr)
+		}
+		if deleteErr := l.uploader.Delete(upload.Cover, item.CoverURL); deleteErr != nil {
+			slog.Error("清理封面失败", "video_id", videoID, "error", deleteErr)
+		}
+		return nil
+	}
+
+	// 已发布：发事件，订阅方各自清理对象、评论、点赞、热度
 	return l.producer.Publish(ctx, topic.VideoDeleted, strconv.FormatUint(videoID, 10), videoevent.DeletedEvent{
 		VideoID:  videoID,
 		AuthorID: item.AuthorID,
@@ -236,6 +388,7 @@ func (l *Logic) toInfoRes(item videorepo.Video) InfoRes {
 		PlayURL:      l.uploader.URL(item.PlayURL),
 		CommentCount: item.CommentCount,
 		LikeCount:    item.LikeCount,
+		Status:       item.Status,
 		CreatedAt:    item.CreateTime,
 	}
 }
@@ -382,6 +535,7 @@ func (l *Logic) fromCacheEntry(entry videorepo.InfoCacheEntry) InfoRes {
 		PlayURL:      entry.PlayURL,
 		CommentCount: entry.CommentCount,
 		LikeCount:    entry.LikeCount,
+		Status:       entry.Status,
 		CreatedAt:    entry.CreatedAt,
 	}
 }
@@ -398,6 +552,7 @@ func toCacheEntry(info InfoRes) videorepo.InfoCacheEntry {
 		PlayURL:      info.PlayURL,
 		LikeCount:    info.LikeCount,
 		CommentCount: info.CommentCount,
+		Status:       info.Status,
 		CreatedAt:    info.CreatedAt,
 	}
 }

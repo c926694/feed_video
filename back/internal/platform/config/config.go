@@ -24,6 +24,7 @@ type Config struct {
 	Kafka  KafkaConfig  `mapstructure:"kafka"`
 	JWT    JWTConfig    `mapstructure:"jwt"`
 	Upload UploadConfig `mapstructure:"upload"`
+	RAM    RAMConfig    `mapstructure:"ram"`
 }
 
 type ServerConfig struct {
@@ -84,6 +85,15 @@ type OSSConfig struct {
 	CustomDomain string `mapstructure:"custom_domain"`
 }
 
+// RAMConfig 直传 STS 临时凭证签发配置
+type RAMConfig struct {
+	Endpoint        string `mapstructure:"endpoint"`
+	AccessKeyID     string `mapstructure:"access_key_id"`
+	AccessKeySecret string `mapstructure:"access_key_secret"`
+	RoleArn         string `mapstructure:"role_arn"`
+	RoleSessionName string `mapstructure:"role_session_name"`
+}
+
 // Load 读取配置文件并补齐可以省略的项
 func Load(path string) (*Config, error) {
 	v := viper.New()
@@ -129,5 +139,8 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Upload.OSS.AccessKeySecret == "" {
 		c.Upload.OSS.AccessKeySecret = os.Getenv("OSS_ACCESS_KEY_SECRET")
+	}
+	if c.RAM.RoleSessionName == "" {
+		c.RAM.RoleSessionName = "feed-video"
 	}
 }

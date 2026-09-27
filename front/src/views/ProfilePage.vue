@@ -24,7 +24,7 @@
       <button :disabled="saving" type="submit">{{ saving ? "保存中..." : "保存资料" }}</button>
     </form>
 
-    <UserVideoGrid :videos="myVideos" />
+    <UserVideoGrid :videos="myVideos" @changed="bootstrap" />
 
     <BottomNav />
   </section>

@@ -20,6 +20,7 @@ export interface Video {
   commentCount: number;
   liked: boolean;
   followed: boolean;
+  status: string;
   author: User;
   score?: string;
 }

@@ -16,6 +16,7 @@ import (
 	userevent "simple_tiktok/internal/modules/user/event"
 	userrepo "simple_tiktok/internal/modules/user/repo"
 	videoevent "simple_tiktok/internal/modules/video/event"
+	videorepo "simple_tiktok/internal/modules/video/repo"
 	"simple_tiktok/internal/platform/httpx"
 	"simple_tiktok/internal/platform/kafka/consumer"
 	"simple_tiktok/internal/platform/kafka/producer"
@@ -26,6 +27,7 @@ import (
 // Logic 评论模块的业务逻辑
 type Logic struct {
 	comments *commentrepo.Repo
+	videos   *videorepo.Repo
 	users    *userrepo.Repo
 	likes    *likerepo.Repo
 	producer *producer.Producer
@@ -35,6 +37,16 @@ type Logic struct {
 func (l *Logic) Create(ctx context.Context, userID uint64, createReq CreateReq) (*InfoRes, error) {
 	if createReq.Content == "" {
 		return nil, httpx.New(httpx.CodeBadRequest, "评论内容不能为空")
+	}
+	video, err := l.videos.GetByID(ctx, createReq.VideoID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, httpx.New(httpx.CodeNotFound, "视频不存在")
+		}
+		return nil, err
+	}
+	if video.Status != videorepo.StatusPublished {
+		return nil, httpx.New(httpx.CodeNotFound, "视频不存在")
 	}
 	commenterName := ""
 	commenterAvatar := ""

@@ -17,6 +17,13 @@ const (
 	infoPhysicalTTL    = 24 * time.Hour
 )
 
+// 视频发布状态
+const (
+	StatusCreated   = "created"   // 已创建，文件上传中
+	StatusPublished = "published" // 已发布
+	StatusFailed    = "failed"    // 上传失败
+)
+
 // Video video 表
 type Video struct {
 	ID           uint64    `gorm:"primaryKey"`
@@ -29,6 +36,7 @@ type Video struct {
 	Description  string    `gorm:"type:text"`
 	LikeCount    int64     `gorm:"default:0"`
 	CommentCount int64     `gorm:"default:0"`
+	Status       string    `gorm:"column:status;size:16;not null;default:published"`
 	CreateTime   time.Time `gorm:"column:created_at;default:CURRENT_TIMESTAMP(3)" json:"created_at"`
 	UpdateTime   time.Time `gorm:"column:updated_at;default:CURRENT_TIMESTAMP(3)" json:"updated_at"`
 }
@@ -45,6 +53,7 @@ type InfoCacheEntry struct {
 	PlayURL      string    `json:"play_url"`
 	LikeCount    int64     `json:"like_count"`
 	CommentCount int64     `json:"comment_count"`
+	Status       string    `json:"status"`
 	CreatedAt    time.Time `json:"created_at"`
 }
 
@@ -100,7 +109,8 @@ func (r *Repo) ListByAuthor(ctx context.Context, authorID uint64, limit uint64) 
 
 func (r *Repo) CountByAuthor(ctx context.Context, authorID uint64) (int64, error) {
 	var count int64
-	err := r.db.WithContext(ctx).Model(&Video{}).Where("author_id = ?", authorID).Count(&count).Error
+	err := r.db.WithContext(ctx).Model(&Video{}).
+		Where("author_id = ? AND status = ?", authorID, StatusPublished).Count(&count).Error
 	return count, err
 }
 
@@ -110,7 +120,7 @@ func (r *Repo) ListByAuthorsBefore(ctx context.Context, authorIDs []uint64, limi
 		return []Video{}, nil
 	}
 	items := make([]Video, 0, limit)
-	query := r.db.WithContext(ctx).Model(&Video{}).Where("author_id in ?", authorIDs)
+	query := r.db.WithContext(ctx).Model(&Video{}).Where("author_id in ? AND status = ?", authorIDs, StatusPublished)
 	if lastID > 0 {
 		query = query.Where("created_at <= ? AND id < ?", lastCreatedAt, lastID)
 	}
@@ -121,7 +131,7 @@ func (r *Repo) ListByAuthorsBefore(ctx context.Context, authorIDs []uint64, limi
 // ListFeedPage 推荐流分页：全表按发布时间倒序，双字段游标定位，第一页 lastID 传 0
 func (r *Repo) ListFeedPage(ctx context.Context, limit uint64, lastCreatedAt time.Time, lastID uint64) ([]Video, error) {
 	items := make([]Video, 0, limit)
-	query := r.db.WithContext(ctx).Model(&Video{})
+	query := r.db.WithContext(ctx).Model(&Video{}).Where("status = ?", StatusPublished)
 	if lastID > 0 {
 		query = query.Where("created_at <= ? AND id < ?", lastCreatedAt, lastID)
 	}
@@ -131,6 +141,17 @@ func (r *Repo) ListFeedPage(ctx context.Context, limit uint64, lastCreatedAt tim
 
 func (r *Repo) Delete(ctx context.Context, videoID uint64) error {
 	return r.db.WithContext(ctx).Delete(&Video{}, videoID).Error
+}
+
+// MarkStatus 条件更新发布状态，只允许从 from 迁移到 to，返回是否发生了迁移
+func (r *Repo) MarkStatus(ctx context.Context, videoID uint64, authorID uint64, from string, to string) (bool, error) {
+	result := r.db.WithContext(ctx).Model(&Video{}).
+		Where("id = ? AND author_id = ? AND status = ?", videoID, authorID, from).
+		Update("status", to)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected == 1, nil
 }
 
 // SyncLikeCount 按实际点赞数对账视频点赞数

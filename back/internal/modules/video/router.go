@@ -29,6 +29,7 @@ func NewLogic(ctx *svc.ServiceContext) *Logic {
 		follows:  followrepo.New(ctx.DB, ctx.Redis),
 		producer: ctx.Producer,
 		uploader: ctx.Upload,
+		sts:      ctx.Sts,
 	}
 }
 
@@ -36,7 +37,9 @@ func RegisterHTTP(r *gin.Engine, ctx *svc.ServiceContext) (*gin.Engine, error) {
 	controller := NewController(NewLogic(ctx))
 	group := r.Group("videos")
 	{
-		group.POST("/create", ctx.Auth.Middleware(), controller.CreateVideo)
+		group.POST("/upload-credential", ctx.Auth.Middleware(), controller.UploadCredential)
+		group.POST("", ctx.Auth.Middleware(), controller.CreateVideo)
+		group.PUT("/:id", ctx.Auth.Middleware(), controller.UpdateStatus)
 		group.DELETE("/:id", ctx.Auth.Middleware(), controller.DeleteVideos)
 		group.GET("/me", ctx.Auth.Middleware(), controller.GetMyVideos)
 		group.GET("/:id", ctx.Auth.Middleware(), controller.GetVideoInfo)

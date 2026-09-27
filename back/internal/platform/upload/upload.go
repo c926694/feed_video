@@ -8,6 +8,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -48,10 +49,12 @@ const defaultAvatarSVG = `<svg xmlns="http://www.w3.org/2000/svg" width="256" he
 // Uploader 把上传文件写进阿里云 OSS，并把存储路径转换成对外访问地址。
 // 数据库里保存的是不带域名的 object key，例如 /avatar/xxx.webp。
 type Uploader struct {
-	bucket    *oss.Bucket
-	prefix    string
-	accessURL string
-	dirs      map[SourceType]string
+	bucket     *oss.Bucket
+	prefix     string
+	accessURL  string
+	bucketName string
+	region     string
+	dirs       map[SourceType]string
 }
 
 // New 创建 Uploader，并在启动阶段确认 bucket 可以访问
@@ -93,10 +96,16 @@ func New(cfg config.UploadConfig) (*Uploader, error) {
 		host = "https://" + host
 	}
 
+	region := cfg.OSS.Endpoint
+	if idx := strings.Index(region, "."); idx > 0 {
+		region = region[:idx]
+	}
 	uploader := &Uploader{
-		bucket:    bucket,
-		prefix:    strings.Trim(cfg.OSS.Prefix, "/"),
-		accessURL: host,
+		bucket:     bucket,
+		prefix:     strings.Trim(cfg.OSS.Prefix, "/"),
+		accessURL:  host,
+		bucketName: cfg.OSS.Bucket,
+		region:     region,
 		dirs: map[SourceType]string{
 			Avatar: strings.Trim(cfg.AvatarDir, "/"),
 			Cover:  strings.Trim(cfg.CoverDir, "/"),
@@ -199,6 +208,16 @@ func (u *Uploader) URL(storedPath string) string {
 	return u.accessURL + "/" + strings.TrimLeft(storedPath, "/")
 }
 
+// BucketName 返回 bucket 名称，供前端直传 SDK 使用
+func (u *Uploader) BucketName() string {
+	return u.bucketName
+}
+
+// Region 返回 OSS 地域，供前端直传 SDK 使用
+func (u *Uploader) Region() string {
+	return u.region
+}
+
 // BuildUniqueFileName 生成唯一文件名
 func BuildUniqueFileName(ext string) (string, error) {
 	raw := make([]byte, 8)
@@ -210,6 +229,55 @@ func BuildUniqueFileName(ext string) (string, error) {
 		normalized = "." + normalized
 	}
 	return fmt.Sprintf("%d_%s%s", time.Now().UnixNano(), hex.EncodeToString(raw), normalized), nil
+}
+
+// BuildKey 生成某个用户目录下的存储路径，供直传凭证接口使用。
+// 返回数据库要存的相对路径，例如 /cover/35/xxx.jpg。
+func (u *Uploader) BuildKey(sourceType SourceType, userID uint64, ext string) (string, error) {
+	dir, allowExt, err := u.locate(sourceType)
+	if err != nil {
+		return "", err
+	}
+	normalized := strings.ToLower(ext)
+	if normalized != "" && !strings.HasPrefix(normalized, ".") {
+		normalized = "." + normalized
+	}
+	if _, ok := allowExt[normalized]; !ok {
+		return "", httpx.New(httpx.CodeBadRequest, "文件类型不支持")
+	}
+	fileName, err := BuildUniqueFileName(normalized)
+	if err != nil {
+		return "", err
+	}
+	key := path.Join(u.prefix, dir, strconv.FormatUint(userID, 10), fileName)
+	return "/" + key, nil
+}
+
+// Head 检查对象是否存在并返回大小，供发布校验使用
+func (u *Uploader) Head(sourceType SourceType, storedPath string) (int64, error) {
+	if storedPath == "" {
+		return 0, fmt.Errorf("存储路径为空")
+	}
+	dir, _, err := u.locate(sourceType)
+	if err != nil {
+		return 0, err
+	}
+	key := strings.TrimLeft(storedPath, "/")
+	if !strings.HasPrefix(key, u.dirPrefix(dir)) {
+		return 0, fmt.Errorf("文件路径 %s 不在 %s 目录内", storedPath, dir)
+	}
+	header, err := u.bucket.GetObjectMeta(key)
+	if err != nil {
+		if isObjectNotExist(err) {
+			return 0, httpx.New(httpx.CodeNotFound, "对象不存在")
+		}
+		return 0, fmt.Errorf("检查对象 %s 失败: %w", key, err)
+	}
+	size, err := strconv.ParseInt(header.Get("Content-Length"), 10, 64)
+	if err != nil || size < 0 {
+		return 0, fmt.Errorf("对象 %s 的大小不合法", key)
+	}
+	return size, nil
 }
 
 func (u *Uploader) locate(sourceType SourceType) (string, map[string]struct{}, error) {

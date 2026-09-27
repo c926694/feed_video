@@ -17,24 +17,49 @@ func NewController(Logic *Logic) *Controller {
 	return &Controller{Logic: Logic}
 }
 
+// UploadCredential 签发直传凭证并生成存储路径
+func (h *Controller) UploadCredential(c *gin.Context) {
+	var credentialReq CredentialReq
+	if err := c.ShouldBind(&credentialReq); err != nil {
+		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "请求参数格式错误"))
+		return
+	}
+	result, err := h.Logic.UploadCredential(c.Request.Context(), auth.UserID(c), credentialReq)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	httpx.OK(c, result)
+}
+
+// CreateVideo 创建发布记录，文件由前端直传 OSS
 func (h *Controller) CreateVideo(c *gin.Context) {
-	play, err := c.FormFile("play")
-	if err != nil {
-		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "请选择要上传的视频文件"))
+	var createReq CreateReq
+	if err := c.ShouldBind(&createReq); err != nil {
+		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "请求参数格式错误"))
 		return
-	}
-	cover, err := c.FormFile("cover")
-	if err != nil {
-		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "请选择视频封面"))
-		return
-	}
-	createReq := CreateReq{
-		Title:       c.PostForm("title"),
-		Description: c.PostForm("description"),
-		Play:        play,
-		Cover:       cover,
 	}
 	result, err := h.Logic.CreateVideo(c.Request.Context(), createReq, auth.UserID(c))
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	httpx.OK(c, result)
+}
+
+// UpdateStatus 更新发布状态：published 发布完成、failed 标记失败、created 重试
+func (h *Controller) UpdateStatus(c *gin.Context) {
+	videoID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "视频 ID 不合法"))
+		return
+	}
+	var updateReq UpdateStatusReq
+	if err = c.ShouldBind(&updateReq); err != nil {
+		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "请求参数格式错误"))
+		return
+	}
+	result, err := h.Logic.UpdateStatus(c.Request.Context(), videoID, auth.UserID(c), updateReq.Status)
 	if err != nil {
 		httpx.Fail(c, err)
 		return

@@ -28,6 +28,7 @@ import (
 	"simple_tiktok/internal/platform/kafka/producer"
 	"simple_tiktok/internal/platform/mysql"
 	"simple_tiktok/internal/platform/redis"
+	"simple_tiktok/internal/platform/sts"
 	"simple_tiktok/internal/platform/upload"
 	"simple_tiktok/internal/svc"
 )
@@ -94,6 +95,7 @@ func main() {
 		Producer: eventProducer,
 		Auth:     authService,
 		Upload:   uploader,
+		Sts:      sts.New(cfg.RAM),
 	}
 
 	gin.SetMode(cfg.Server.Mode)

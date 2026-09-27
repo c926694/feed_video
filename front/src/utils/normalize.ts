@@ -1,4 +1,4 @@
-﻿import type { RawComment, RawUser, RawVideo } from "@/types/backend";
+import type { RawComment, RawUser, RawVideo } from "@/types/backend";
 import type { Comment, User, Video } from "@/types/domain";
 
 function toNumber(value: unknown, fallback = 0) {
@@ -41,6 +41,7 @@ export function normalizeVideo(raw?: RawVideo | null): Video {
     commentCount: toNumber(raw?.comment_count),
     liked: Boolean(raw?.is_liked ?? raw?.is_favorite),
     followed: Boolean(raw?.is_follow),
+    status: toString(raw?.status, "published"),
     author: normalizeUser(raw?.author ?? raw?.user ?? authorFallback),
     score: raw?.score ? String(raw.score) : undefined
   };

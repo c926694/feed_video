@@ -6,6 +6,7 @@ import (
 
 	"simple_tiktok/internal/platform/auth"
 	"simple_tiktok/internal/platform/kafka/producer"
+	"simple_tiktok/internal/platform/sts"
 	"simple_tiktok/internal/platform/upload"
 )
 
@@ -17,4 +18,5 @@ type ServiceContext struct {
 	Producer *producer.Producer
 	Auth     *auth.Service
 	Upload   *upload.Uploader
+	Sts      *sts.Service
 }

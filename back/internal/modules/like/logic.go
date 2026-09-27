@@ -31,11 +31,15 @@ type Logic struct {
 }
 
 func (l *Logic) SwitchVideoLike(ctx context.Context, videoID uint64, userID uint64) (bool, error) {
-	if _, err := l.videos.GetByID(ctx, videoID); err != nil {
+	video, err := l.videos.GetByID(ctx, videoID)
+	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return false, httpx.New(httpx.CodeNotFound, "视频不存在")
 		}
 		return false, err
+	}
+	if video.Status != videorepo.StatusPublished {
+		return false, httpx.New(httpx.CodeNotFound, "视频不存在")
 	}
 	return l.switchLike(ctx, event.TargetVideo, videoID, userID)
 }
