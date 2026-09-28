@@ -8,6 +8,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const followKeyFormat = "follow:%d"
@@ -30,36 +31,45 @@ func New(db *gorm.DB, redisClient *redis.Client) *Repo {
 	return &Repo{db: db, redisClient: redisClient}
 }
 
-var switchScript = redis.NewScript(`
-if redis.call("SISMEMBER", KEYS[1], ARGV[1]) == 1 then
-    redis.call("SREM", KEYS[1], ARGV[1])
+var setScript = redis.NewScript(`
+local want = tonumber(ARGV[2])
+local cur = redis.call("SISMEMBER", KEYS[1], ARGV[1])
+if cur == want then
     return 0
 end
-redis.call("SADD", KEYS[1], ARGV[1])
+if want == 1 then
+    redis.call("SADD", KEYS[1], ARGV[1])
+else
+    redis.call("SREM", KEYS[1], ARGV[1])
+end
 return 1
 `)
 
-// Switch 切换关注状态，返回切换后的状态
-func (r *Repo) Switch(ctx context.Context, follower uint64, following uint64) (bool, error) {
-	result, err := switchScript.Run(ctx, r.redisClient, []string{followKey(follower)}, following).Int()
+// Set 把关注状态设置成目标态，返回状态是否发生了变化。
+// 执行完之后集合状态必然等于目标态
+func (r *Repo) Set(ctx context.Context, follower uint64, following uint64, active bool) (bool, error) {
+	val := "0"
+	if active {
+		val = "1"
+	}
+	result, err := setScript.Run(ctx, r.redisClient, []string{followKey(follower)}, following, val).Int()
 	if err != nil {
 		return false, err
 	}
 	return result == 1, nil
 }
 
-// Reset 把状态恢复成切换之前的样子，用于事件发布失败时回滚
-func (r *Repo) Reset(ctx context.Context, follower uint64, following uint64, followed bool) error {
-	key := followKey(follower)
-	if followed {
-		return r.redisClient.SAdd(ctx, key, following).Err()
-	}
-	return r.redisClient.SRem(ctx, key, following).Err()
-}
-
+// Create 写入一条关注关系，冲突时忽略，保证事件重放幂等
 func (r *Repo) Create(ctx context.Context, follower uint64, following uint64) error {
 	item := Follow{Following: following, Follower: follower}
-	return r.db.WithContext(ctx).Create(&item).Error
+	return r.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&item).Error
+}
+
+// UserExists 判断用户是否存在，关注前校验目标
+func (r *Repo) UserExists(ctx context.Context, userID uint64) (bool, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Table("user").Where("id = ?", userID).Count(&count).Error
+	return count > 0, err
 }
 
 func (r *Repo) Delete(ctx context.Context, follower uint64, following uint64) error {

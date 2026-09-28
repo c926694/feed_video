@@ -24,7 +24,8 @@ func RegisterHTTP(r *gin.Engine, ctx *svc.ServiceContext) (*gin.Engine, error) {
 	controller := NewController(NewLogic(ctx))
 	group := r.Group("follows")
 	{
-		group.POST("/switchFollow/:follower", ctx.Auth.Middleware(), controller.Follow)
+		group.POST("/:id", ctx.Auth.Middleware(), controller.Follow)
+		group.DELETE("/:id", ctx.Auth.Middleware(), controller.Unfollow)
 	}
 	return r, nil
 }

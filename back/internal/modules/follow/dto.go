@@ -1,7 +1,7 @@
 package follow
 
-// SwitchRes 关注切换响应
-type SwitchRes struct {
+// FollowRes 关注状态响应
+type FollowRes struct {
 	Following uint64 `json:"following"`
 	IsFollow  bool   `json:"is_follow"`
 }

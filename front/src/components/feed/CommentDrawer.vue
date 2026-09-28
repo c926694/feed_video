@@ -29,7 +29,10 @@
             <template v-if="replyState(item.id)?.open">
               <ul class="replies">
                 <li v-for="reply in replyState(item.id)?.replies" :key="reply.id">
-                  <span class="reply-author">{{ reply.author.username || reply.author.nickname }}</span>
+                  <span class="reply-author">
+                    <img v-if="reply.author.avatar" :src="reply.author.avatar" alt="avatar" />
+                    {{ reply.author.username || reply.author.nickname }}
+                  </span>
                   <em v-if="isMine(reply)" class="me-badge">我</em>
                   <span v-if="reply.replyToUserName" class="reply-to">回复 @{{ reply.replyToUserName }}</span>
                   <p>{{ reply.content }}</p>
@@ -424,6 +427,15 @@ p {
 .reply-author {
   color: var(--text-muted);
   font-size: 12px;
+}
+
+.reply-author img {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  object-fit: cover;
+  vertical-align: middle;
+  margin-right: 6px;
 }
 
 .reply-to {

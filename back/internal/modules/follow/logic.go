@@ -22,27 +22,44 @@ type Logic struct {
 	producer *producer.Producer
 }
 
-func (l *Logic) SwitchFollow(ctx context.Context, targetUserID uint64, currentUserID uint64) (bool, error) {
+// SetFollow 把关注状态设置成目标态，幂等：重复设置同一目标态不发事件
+func (l *Logic) SetFollow(ctx context.Context, targetUserID uint64, currentUserID uint64, active bool) (bool, error) {
 	if targetUserID == currentUserID {
 		return false, httpx.New(httpx.CodeBadRequest, "不能关注自己")
 	}
-	followed, err := l.repo.Switch(ctx, currentUserID, targetUserID)
+	exists, err := l.repo.UserExists(ctx, targetUserID)
 	if err != nil {
 		return false, err
 	}
+	if !exists {
+		return false, httpx.New(httpx.CodeNotFound, "用户不存在")
+	}
+	return l.setFollow(ctx, targetUserID, currentUserID, active)
+}
 
-	err = l.producer.Publish(ctx, topic.FollowSwitched, strconv.FormatUint(targetUserID, 10), event.SwitchedEvent{
+// setFollow 把关注状态设置成目标态。状态没变时幂等返回，不发事件；
+// 状态变了才发事件，发布失败时把状态写回之前的状态
+func (l *Logic) setFollow(ctx context.Context, targetUserID uint64, currentUserID uint64, active bool) (bool, error) {
+	changed, err := l.repo.Set(ctx, currentUserID, targetUserID, active)
+	if err != nil {
+		return false, err
+	}
+	if !changed {
+		// 本来就是目标态，幂等返回，不重复发事件
+		return active, nil
+	}
+
+	if err = l.producer.Publish(ctx, topic.FollowSwitched, strconv.FormatUint(targetUserID, 10), event.SwitchedEvent{
 		Follower:  currentUserID,
 		Following: targetUserID,
-		Followed:  followed,
-	})
-	if err != nil {
-		if rollbackErr := l.repo.Reset(ctx, currentUserID, targetUserID, !followed); rollbackErr != nil {
+		Followed:  active,
+	}); err != nil {
+		if _, rollbackErr := l.repo.Set(ctx, currentUserID, targetUserID, !active); rollbackErr != nil {
 			return false, httpx.New(httpx.CodeInternal, fmt.Sprintf("关注状态回滚失败: %v", rollbackErr))
 		}
 		return false, err
 	}
-	return followed, nil
+	return active, nil
 }
 
 // HandleSwitched 订阅自己的事件，维护 follow 表

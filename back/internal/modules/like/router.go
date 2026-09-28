@@ -28,9 +28,9 @@ func RegisterHTTP(r *gin.Engine, ctx *svc.ServiceContext) (*gin.Engine, error) {
 	controller := NewController(NewLogic(ctx))
 	group := r.Group("likes")
 	{
-		group.PUT("/video/:id", ctx.Auth.Middleware(), controller.LikeVideo)
+		group.POST("/video/:id", ctx.Auth.Middleware(), controller.LikeVideo)
 		group.DELETE("/video/:id", ctx.Auth.Middleware(), controller.UnlikeVideo)
-		group.PUT("/comment/:id", ctx.Auth.Middleware(), controller.LikeComment)
+		group.POST("/comment/:id", ctx.Auth.Middleware(), controller.LikeComment)
 		group.DELETE("/comment/:id", ctx.Auth.Middleware(), controller.UnlikeComment)
 	}
 	return r, nil
