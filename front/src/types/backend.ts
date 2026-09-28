@@ -72,8 +72,7 @@ export interface RawComment {
   reply_to_id?: number;
   reply_to_user_id?: number;
   reply_to_user_name?: string;
-  has_more_replies?: boolean;
-  replies?: RawComment[];
+  reply_count?: number;
   author?: RawUser;
   user?: RawUser;
   [key: string]: unknown;

@@ -63,8 +63,7 @@ export function normalizeComment(raw?: RawComment | null): Comment {
     parentId: toNumber(raw?.parent_id),
     replyToUserId: toNumber(raw?.reply_to_user_id),
     replyToUserName: toString(raw?.reply_to_user_name),
-    replies: Array.isArray(raw?.replies) ? raw.replies.map(normalizeComment) : [],
-    hasMoreReplies: Boolean(raw?.has_more_replies)
+    replyCount: toNumber(raw?.reply_count)
   };
 }
 

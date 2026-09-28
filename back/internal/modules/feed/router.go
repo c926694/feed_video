@@ -46,6 +46,5 @@ func RegisterConsumers(sub *consumer.Consumer, ctx *svc.ServiceContext) error {
 	sub.Subscribe(topic.VideoDeleted, moduleLogic.HandleVideoDeleted)
 	sub.Subscribe(topic.LikeSwitched, moduleLogic.HandleLikeSwitched)
 	sub.Subscribe(topic.CommentCreated, moduleLogic.HandleCommentCreated)
-	sub.Subscribe(topic.CommentDeleted, moduleLogic.HandleCommentDeleted)
 	return nil
 }

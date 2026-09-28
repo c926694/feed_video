@@ -179,18 +179,6 @@ func (l *Logic) HandleCommentCreated(ctx context.Context, payload []byte) error 
 	return l.feed.IncreaseHotScore(ctx, created.VideoID, commentHotDelta, time.Now())
 }
 
-// HandleCommentDeleted 评论删除减热度
-func (l *Logic) HandleCommentDeleted(ctx context.Context, payload []byte) error {
-	var deleted commentevent.DeletedEvent
-	if err := json.Unmarshal(payload, &deleted); err != nil {
-		return consumer.Permanent(err)
-	}
-	if deleted.VideoID == 0 {
-		return consumer.Permanent(errors.New("评论事件里没有 videoId"))
-	}
-	return l.feed.IncreaseHotScore(ctx, deleted.VideoID, -commentHotDelta, time.Now())
-}
-
 func (l *Logic) assemble(ctx context.Context, items []videorepo.Video, userID uint64) ([]VideoItem, error) {
 	list := make([]VideoItem, len(items))
 	authorIDs := make([]uint64, 0, len(items))

@@ -12,6 +12,7 @@
             <div class="author-row">
               <img v-if="item.author.avatar" :src="item.author.avatar" alt="avatar" />
               <span>{{ item.author.username || item.author.nickname }}</span>
+              <em v-if="isMine(item)" class="me-badge">我</em>
             </div>
             <p>{{ item.content }}</p>
             <small>
@@ -22,26 +23,39 @@
                 <span>{{ item.likeCount }}</span>
               </button>
               <button class="reply-btn" @click="startReply(item.id, 0, item.author.username || item.author.nickname)">回复</button>
+              <button v-if="isMine(item)" class="delete-btn" @click="removeComment(item)">删除</button>
             </small>
 
-            <ul v-if="item.replies.length" class="replies">
-              <li v-for="reply in item.replies" :key="reply.id">
-                <span class="reply-author">{{ reply.author.username || reply.author.nickname }}</span>
-                <span v-if="reply.replyToUserName" class="reply-to">回复 @{{ reply.replyToUserName }}</span>
-                <p>{{ reply.content }}</p>
-                <small>
-                  <button class="like-btn" :class="{ active: reply.liked }" @click="onReplyLike(item.id, reply.id)">
-                    <svg viewBox="0 0 24 24" class="icon-svg" aria-hidden="true">
-                      <path d="M12 20.2 4.9 13.7a4.9 4.9 0 0 1 6.9-7L12 7.9l.2-.2a4.9 4.9 0 0 1 6.9 7L12 20.2Z" />
-                    </svg>
-                    <span>{{ reply.likeCount }}</span>
-                  </button>
-                  <button class="reply-btn" @click="startReply(item.id, reply.id, reply.author.username || reply.author.nickname)">回复</button>
-                </small>
-              </li>
-            </ul>
-            <button v-if="item.hasMoreReplies" class="more-btn" @click="loadMoreReplies(item)">
-              展开更多回复
+            <template v-if="replyState(item.id)?.open">
+              <ul class="replies">
+                <li v-for="reply in replyState(item.id)?.replies" :key="reply.id">
+                  <span class="reply-author">{{ reply.author.username || reply.author.nickname }}</span>
+                  <em v-if="isMine(reply)" class="me-badge">我</em>
+                  <span v-if="reply.replyToUserName" class="reply-to">回复 @{{ reply.replyToUserName }}</span>
+                  <p>{{ reply.content }}</p>
+                  <small>
+                    <button class="like-btn" :class="{ active: reply.liked }" @click="onReplyLike(item.id, reply.id)">
+                      <svg viewBox="0 0 24 24" class="icon-svg" aria-hidden="true">
+                        <path d="M12 20.2 4.9 13.7a4.9 4.9 0 0 1 6.9-7L12 7.9l.2-.2a4.9 4.9 0 0 1 6.9 7L12 20.2Z" />
+                      </svg>
+                      <span>{{ reply.likeCount }}</span>
+                    </button>
+                    <button class="reply-btn" @click="startReply(item.id, reply.id, reply.author.username || reply.author.nickname)">回复</button>
+                    <button v-if="isMine(reply)" class="delete-btn" @click="removeComment(reply)">删除</button>
+                  </small>
+                </li>
+              </ul>
+              <button v-if="replyState(item.id)?.hasMore" class="more-btn" @click="loadMoreReplies(item)">
+                展开回复
+              </button>
+              <button class="more-btn" @click="collapseReplies(item.id)">收起</button>
+            </template>
+            <button
+              v-else-if="item.replyCount > 0"
+              class="more-btn"
+              @click="expandReplies(item)"
+            >
+              展开 {{ item.replyCount }} 条回复
             </button>
           </li>
         </ul>
@@ -62,7 +76,7 @@
 
 <script setup lang="ts">
 import { ref, watch } from "vue";
-import { createComment, fetchCommentList, fetchReplyList, setCommentLike } from "@/api";
+import { createComment, deleteComment, fetchCommentList, fetchMe, fetchReplyList, setCommentLike } from "@/api";
 import type { Comment } from "@/types/domain";
 import { useToast } from "@/composables/useToast";
 
@@ -83,12 +97,29 @@ const sending = ref(false);
 const cursor = ref<{ lastCreatedAt: number; lastId: number } | null>(null);
 const hasMore = ref(false);
 const replyTarget = ref<{ id: number; replyToId: number; name: string } | null>(null);
+const currentUserId = ref<number | null>(null);
+
+// 每个顶级评论的展开状态：首次展开 3 条，之后每次追加 10 条
+interface ReplyState {
+  open: boolean;
+  replies: Comment[];
+  cursor: { lastCreatedAt: number; lastId: number } | null;
+  hasMore: boolean;
+}
+const replyStates = ref<Record<number, ReplyState>>({});
+const firstExpandSize = 3;
+const moreExpandSize = 10;
+
+function replyState(commentId: number): ReplyState | undefined {
+  return replyStates.value[commentId];
+}
 
 async function loadFirstPage() {
   const page = await fetchCommentList(props.videoId);
   comments.value = page.comments;
   cursor.value = page.lastId ? { lastCreatedAt: page.lastCreatedAt, lastId: page.lastId } : null;
   hasMore.value = page.hasMore;
+  replyStates.value = {};
 }
 
 watch(
@@ -96,6 +127,12 @@ watch(
   async (isOpen) => {
     if (!isOpen || !props.videoId) return;
     replyTarget.value = null;
+    try {
+      const me = await fetchMe();
+      currentUserId.value = me.id;
+    } catch {
+      currentUserId.value = null;
+    }
     await loadFirstPage();
   },
   { immediate: true }
@@ -109,10 +146,43 @@ async function loadMore() {
   hasMore.value = page.hasMore;
 }
 
+async function expandReplies(item: Comment) {
+  const existing = replyState(item.id);
+  if (existing) {
+    replyStates.value = { ...replyStates.value, [item.id]: { ...existing, open: true } };
+    return;
+  }
+  const page = await fetchReplyList(item.id, { limit: firstExpandSize });
+  replyStates.value = {
+    ...replyStates.value,
+    [item.id]: {
+      open: true,
+      replies: page.comments,
+      cursor: page.lastId ? { lastCreatedAt: page.lastCreatedAt, lastId: page.lastId } : null,
+      hasMore: page.hasMore
+    }
+  };
+}
+
 async function loadMoreReplies(item: Comment) {
-  const page = await fetchReplyList(item.id);
-  item.replies = page.comments;
-  item.hasMoreReplies = page.hasMore;
+  const state = replyState(item.id);
+  if (!state?.cursor) return;
+  const page = await fetchReplyList(item.id, { limit: moreExpandSize, cursor: state.cursor });
+  replyStates.value = {
+    ...replyStates.value,
+    [item.id]: {
+      ...state,
+      replies: state.replies.concat(page.comments),
+      cursor: page.lastId ? { lastCreatedAt: page.lastCreatedAt, lastId: page.lastId } : null,
+      hasMore: page.hasMore
+    }
+  };
+}
+
+function collapseReplies(commentId: number) {
+  const state = replyState(commentId);
+  if (!state) return;
+  replyStates.value = { ...replyStates.value, [commentId]: { ...state, open: false } };
 }
 
 function startReply(commentId: number, replyToId: number, name: string) {
@@ -137,6 +207,50 @@ async function submitComment() {
   }
 }
 
+function isMine(comment: Comment) {
+  return currentUserId.value !== null && comment.author.id === currentUserId.value;
+}
+
+async function removeComment(item: Comment) {
+  const isTop = item.parentId === 0;
+  const message =
+    isTop && item.replyCount > 0
+      ? `删除这条评论及其 ${item.replyCount} 条回复？`
+      : "删除这条评论？";
+  if (!window.confirm(message)) return;
+  try {
+    await deleteComment(item.id);
+  } catch {
+    showToast("删除失败，请重试");
+    return;
+  }
+
+  if (isTop) {
+    comments.value = comments.value.filter((entry) => entry.id !== item.id);
+    const next = { ...replyStates.value };
+    delete next[item.id];
+    replyStates.value = next;
+  } else {
+    const parentId = item.parentId;
+    comments.value = comments.value.map((entry) =>
+      entry.id === parentId
+        ? { ...entry, replyCount: Math.max(0, entry.replyCount - 1) }
+        : entry
+    );
+    const state = replyState(parentId);
+    if (state) {
+      replyStates.value = {
+        ...replyStates.value,
+        [parentId]: {
+          ...state,
+          replies: state.replies.filter((entry) => entry.id !== item.id)
+        }
+      };
+    }
+  }
+  showToast("删除成功");
+}
+
 async function onLike(commentId: number) {
   const current = comments.value.find((item) => item.id === commentId);
   if (!current) return;
@@ -152,20 +266,26 @@ async function onLike(commentId: number) {
   );
 }
 
-async function onReplyLike(parentId: number, replyId: number) {
-  const parent = comments.value.find((item) => item.id === parentId);
-  const current = parent?.replies.find((item) => item.id === replyId);
-  if (!parent || !current) return;
+async function onReplyLike(commentId: number, replyId: number) {
+  const state = replyState(commentId);
+  const current = state?.replies.find((item) => item.id === replyId);
+  if (!state || !current) return;
   const targetLiked = await setCommentLike(replyId, !current.liked);
-  parent.replies = parent.replies.map((item) =>
-    item.id === replyId
-      ? {
-          ...item,
-          liked: targetLiked,
-          likeCount: Math.max(0, item.likeCount + ((targetLiked ? 1 : 0) - (item.liked ? 1 : 0)))
-        }
-      : item
-  );
+  replyStates.value = {
+    ...replyStates.value,
+    [commentId]: {
+      ...state,
+      replies: state.replies.map((item) =>
+        item.id === replyId
+          ? {
+              ...item,
+              liked: targetLiked,
+              likeCount: Math.max(0, item.likeCount + ((targetLiked ? 1 : 0) - (item.liked ? 1 : 0)))
+            }
+          : item
+      )
+    }
+  };
 }
 </script>
 
@@ -263,6 +383,24 @@ p {
 
 .reply-btn {
   margin-left: 14px;
+}
+
+.delete-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  padding: 0;
+  margin-left: 14px;
+}
+
+.me-badge {
+  background: var(--accent);
+  color: #fff;
+  font-style: normal;
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 999px;
 }
 
 .icon-svg {

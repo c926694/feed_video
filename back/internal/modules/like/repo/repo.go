@@ -118,9 +118,31 @@ func (r *Repo) DeleteByTarget(ctx context.Context, targetType string, targetID u
 		Delete(&Like{}).Error
 }
 
+// DeleteByTargets 批量删除多个目标下的全部点赞关系，一条 SQL
+func (r *Repo) DeleteByTargets(ctx context.Context, targetType string, targetIDs []uint64) error {
+	if len(targetIDs) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).
+		Where("target_type = ? AND target_id IN ?", targetType, targetIDs).
+		Delete(&Like{}).Error
+}
+
 // DeleteTargetSet 删除某个目标的点赞集合，删除视频或评论时清理
 func (r *Repo) DeleteTargetSet(ctx context.Context, target string, targetID uint64) error {
 	return r.redisClient.Del(ctx, keyFor(target, targetID)).Err()
+}
+
+// DeleteTargetSets 批量删除多个目标的点赞集合，一条 DEL 命令
+func (r *Repo) DeleteTargetSets(ctx context.Context, target string, targetIDs []uint64) error {
+	if len(targetIDs) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(targetIDs))
+	for _, targetID := range targetIDs {
+		keys = append(keys, keyFor(target, targetID))
+	}
+	return r.redisClient.Del(ctx, keys...).Err()
 }
 
 // CountLikes 返回某个目标的点赞用户数

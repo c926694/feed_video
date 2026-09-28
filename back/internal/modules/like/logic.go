@@ -10,7 +10,6 @@ import (
 
 	"gorm.io/gorm"
 
-	commentevent "simple_tiktok/internal/modules/comment/event"
 	commentrepo "simple_tiktok/internal/modules/comment/repo"
 	"simple_tiktok/internal/modules/like/event"
 	"simple_tiktok/internal/modules/like/repo"
@@ -123,26 +122,6 @@ func (l *Logic) HandleVideoDeleted(ctx context.Context, payload []byte) error {
 	}
 	if err := l.repo.DeleteTargetSet(ctx, event.TargetVideo, deleted.VideoID); err != nil {
 		slog.Error("清理视频点赞集合失败", "video_id", deleted.VideoID, "error", err)
-		return err
-	}
-	return nil
-}
-
-// HandleCommentDeleted 评论被删除后清理它的全部点赞
-func (l *Logic) HandleCommentDeleted(ctx context.Context, payload []byte) error {
-	var deleted commentevent.DeletedEvent
-	if err := json.Unmarshal(payload, &deleted); err != nil {
-		return consumer.Permanent(err)
-	}
-	if deleted.CommentID == 0 {
-		return consumer.Permanent(errors.New("删除评论事件里没有 commentId"))
-	}
-	if err := l.repo.DeleteByTarget(ctx, event.TargetComment, deleted.CommentID); err != nil {
-		slog.Error("清理评论点赞失败", "comment_id", deleted.CommentID, "error", err)
-		return err
-	}
-	if err := l.repo.DeleteTargetSet(ctx, event.TargetComment, deleted.CommentID); err != nil {
-		slog.Error("清理评论点赞集合失败", "comment_id", deleted.CommentID, "error", err)
 		return err
 	}
 	return nil

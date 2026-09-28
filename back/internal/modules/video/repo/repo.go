@@ -181,12 +181,6 @@ func (r *Repo) SyncLikeCount(ctx context.Context, videoID uint64, count int64) e
 		Update("like_count", count).Error
 }
 
-// SyncCommentCount 按实际评论数对账视频评论数
-func (r *Repo) SyncCommentCount(ctx context.Context, videoID uint64, count int64) error {
-	return r.db.WithContext(ctx).Model(&Video{}).Where("id = ?", videoID).
-		Update("comment_count", count).Error
-}
-
 // UpdateAuthorInfo 刷新某个作者全部视频上冗余的展示字段
 func (r *Repo) UpdateAuthorInfo(ctx context.Context, authorID uint64, authorName string, authorAvatar string) error {
 	updates := map[string]any{"author_avatar": authorAvatar}

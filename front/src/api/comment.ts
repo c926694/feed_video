@@ -43,10 +43,16 @@ export async function fetchCommentList(videoId: number, cursor?: CommentCursor):
   return toCommentPage(unwrapData<unknown>(data));
 }
 
-export async function fetchReplyList(commentId: number, cursor?: CommentCursor): Promise<CommentPage> {
+export async function fetchReplyList(
+  commentId: number,
+  options?: { limit?: number; cursor?: CommentCursor }
+): Promise<CommentPage> {
   const { data } = await http.get(`/comments/replies/${commentId}`, {
     params: {
-      ...(cursor?.lastId ? { last_created_at: cursor.lastCreatedAt, last_id: cursor.lastId } : {})
+      ...(options?.limit ? { limit: options.limit } : {}),
+      ...(options?.cursor?.lastId
+        ? { last_created_at: options.cursor.lastCreatedAt, last_id: options.cursor.lastId }
+        : {})
     }
   });
   return toCommentPage(unwrapData<unknown>(data));

@@ -14,8 +14,6 @@ import (
 
 	"gorm.io/gorm"
 
-	commentevent "simple_tiktok/internal/modules/comment/event"
-	commentrepo "simple_tiktok/internal/modules/comment/repo"
 	followrepo "simple_tiktok/internal/modules/follow/repo"
 	likeevent "simple_tiktok/internal/modules/like/event"
 	likerepo "simple_tiktok/internal/modules/like/repo"
@@ -45,7 +43,6 @@ const (
 // Logic 视频模块的业务逻辑
 type Logic struct {
 	videos   *videorepo.Repo
-	comments *commentrepo.Repo
 	users    *userrepo.Repo
 	likes    *likerepo.Repo
 	follows  *followrepo.Repo
@@ -394,45 +391,6 @@ func (l *Logic) HandleLikeSwitched(ctx context.Context, payload []byte) error {
 	}
 	// 点赞数变了，让详情缓存失效，下一次读重新回源
 	return l.videos.DeleteInfoCache(ctx, switched.TargetID)
-}
-
-// HandleCommentCreated 订阅评论创建事件，按实际评论数对账
-func (l *Logic) HandleCommentCreated(ctx context.Context, payload []byte) error {
-	var created commentevent.CreatedEvent
-	if err := json.Unmarshal(payload, &created); err != nil {
-		return consumer.Permanent(err)
-	}
-	if created.VideoID == 0 {
-		return consumer.Permanent(errors.New("评论事件里没有 videoId"))
-	}
-	return l.syncCommentCount(ctx, created.VideoID)
-}
-
-// HandleCommentDeleted 订阅评论删除事件，按实际评论数对账
-func (l *Logic) HandleCommentDeleted(ctx context.Context, payload []byte) error {
-	var deleted commentevent.DeletedEvent
-	if err := json.Unmarshal(payload, &deleted); err != nil {
-		return consumer.Permanent(err)
-	}
-	if deleted.VideoID == 0 {
-		return consumer.Permanent(errors.New("评论事件里没有 videoId"))
-	}
-	return l.syncCommentCount(ctx, deleted.VideoID)
-}
-
-// syncCommentCount 按评论表实际行数对账视频评论数
-func (l *Logic) syncCommentCount(ctx context.Context, videoID uint64) error {
-	count, err := l.comments.CountByVideo(ctx, videoID)
-	if err != nil {
-		slog.Error("统计视频评论数失败", "video_id", videoID, "error", err)
-		return err
-	}
-	if err = l.videos.SyncCommentCount(ctx, videoID, count); err != nil {
-		slog.Error("对账视频评论数失败", "video_id", videoID, "error", err)
-		return err
-	}
-	// 评论数变了，让详情缓存失效，下一次读重新回源
-	return l.videos.DeleteInfoCache(ctx, videoID)
 }
 
 func (l *Logic) toInfoRes(item videorepo.Video) InfoRes {

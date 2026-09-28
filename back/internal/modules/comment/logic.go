@@ -29,7 +29,6 @@ import (
 const (
 	defaultCommentLimit = 20
 	maxCommentLimit     = 100
-	recentRepliesCount  = 3
 )
 
 // Logic 评论模块的业务逻辑
@@ -104,11 +103,21 @@ func (l *Logic) Create(ctx context.Context, userID uint64, createReq CreateReq) 
 	item.CommenterName = commenterName
 	item.CommenterAvatar = commenterAvatar
 
-	if err := l.comments.Create(ctx, &item); err != nil {
-		return nil, err
+	var createErr error
+	if item.ParentID > 0 {
+		createErr = l.comments.CreateReply(ctx, &item, item.ParentID, item.VideoID)
+	} else {
+		createErr = l.comments.CreateTop(ctx, &item, item.VideoID)
+	}
+	if createErr != nil {
+		if errors.Is(createErr, gorm.ErrRecordNotFound) {
+			return nil, httpx.New(httpx.CodeNotFound, "父评论不存在")
+		}
+		return nil, createErr
 	}
 
-	// 评论行是真值，事件投递失败只记日志，接口以行的状态为准
+	// 热度走 Kafka，投递失败只记日志；评论数已随事务即时更新。
+	// 评论数对视频展示不重要，缓存里的旧值由逻辑过期兜住，不主动失效
 	if err := l.producer.Publish(ctx, topic.CommentCreated, strconv.FormatUint(item.ID, 10), commentevent.CreatedEvent{
 		CommentID: item.ID,
 		VideoID:   item.VideoID,
@@ -122,7 +131,8 @@ func (l *Logic) Create(ctx context.Context, userID uint64, createReq CreateReq) 
 }
 
 // Delete 删除评论。顶级评论连同整楼子评论一起删除；
-// 删除不存在的评论视为成功，保持幂等
+// 删除不存在的评论视为成功，保持幂等。评论行、计数、缓存、点赞关系全部同步处理，
+// 只有热度这类纯增量副作用走事件，删除不发事件
 func (l *Logic) Delete(ctx context.Context, userID uint64, commentID uint64) error {
 	item, err := l.comments.GetByID(ctx, commentID)
 	if err != nil {
@@ -136,32 +146,42 @@ func (l *Logic) Delete(ctx context.Context, userID uint64, commentID uint64) err
 		return httpx.New(httpx.CodeForbidden, "只能删除自己的评论")
 	}
 
-	removed := []commentrepo.Comment{*item}
-	if item.ParentID == 0 {
-		children, listErr := l.comments.ListRepliesAll(ctx, item.ID)
-		if listErr != nil {
-			return listErr
+	if item.ParentID > 0 {
+		// 删除单条子评论：同一事务里扣减父评论回复数与视频评论数
+		if err := l.comments.DeleteReply(ctx, item.ID, item.ParentID, item.VideoID); err != nil {
+			return err
 		}
-		removed = append(removed, children...)
+		l.clearCommentLikes(ctx, []uint64{item.ID})
+		return nil
 	}
 
-	for _, row := range removed {
-		if deleteErr := l.comments.Delete(ctx, row.ID); deleteErr != nil {
-			return deleteErr
-		}
+	// 删除整楼：事务里删掉楼内全部行并扣减视频评论数，返回被删的行批量清点赞
+	removed, err := l.comments.DeleteTopWithReplies(ctx, item.ID, item.VideoID)
+	if err != nil {
+		return err
 	}
+	commentIDs := make([]uint64, 0, len(removed))
 	for _, row := range removed {
-		if publishErr := l.producer.Publish(ctx, topic.CommentDeleted, strconv.FormatUint(row.ID, 10), commentevent.DeletedEvent{
-			CommentID: row.ID,
-			VideoID:   row.VideoID,
-		}); publishErr != nil {
-			slog.Error("发布评论删除事件失败", "comment_id", row.ID, "error", publishErr)
-		}
+		commentIDs = append(commentIDs, row.ID)
 	}
+	l.clearCommentLikes(ctx, commentIDs)
 	return nil
 }
 
-// ListByVideo 顶级评论分页，每条带最近三条子评论
+// clearCommentLikes 批量清理点赞关系与点赞集合：一条 SQL 加一条 DEL，幂等操作失败只记日志
+func (l *Logic) clearCommentLikes(ctx context.Context, commentIDs []uint64) {
+	if len(commentIDs) == 0 {
+		return
+	}
+	if err := l.likes.DeleteByTargets(ctx, likeevent.TargetComment, commentIDs); err != nil {
+		slog.Error("批量清理评论点赞关系失败", "comment_count", len(commentIDs), "error", err)
+	}
+	if err := l.likes.DeleteTargetSets(ctx, likeevent.TargetComment, commentIDs); err != nil {
+		slog.Error("批量清理评论点赞集合失败", "comment_count", len(commentIDs), "error", err)
+	}
+}
+
+// ListByVideo 顶级评论分页，只返回顶层与 reply_count，子评论走回复接口按需加载
 func (l *Logic) ListByVideo(ctx context.Context, videoID uint64, lastCreatedAt int64, lastID uint64, limit uint64, userID uint64) (*ListRes, error) {
 	limit = normalizeLimit(limit)
 	var cursor time.Time
@@ -180,21 +200,7 @@ func (l *Logic) ListByVideo(ctx context.Context, videoID uint64, lastCreatedAt i
 
 	list := make([]InfoRes, 0, len(items))
 	for i := range items {
-		info := l.toInfoRes(items[i])
-		// 多取一条判断是否还有更多回复，不做冗余计数
-		recent, recentErr := l.comments.ListRecentReplies(ctx, videoID, items[i].ID, recentRepliesCount+1)
-		if recentErr != nil {
-			return nil, recentErr
-		}
-		info.HasMoreReplies = len(recent) > recentRepliesCount
-		if info.HasMoreReplies {
-			recent = recent[:recentRepliesCount]
-		}
-		info.Replies = make([]InfoRes, 0, len(recent))
-		for j := range recent {
-			info.Replies = append(info.Replies, l.toInfoRes(recent[j]))
-		}
-		list = append(list, info)
+		list = append(list, l.toInfoRes(items[i]))
 	}
 
 	if err = l.fillLiked(ctx, list, userID); err != nil {
@@ -268,6 +274,7 @@ func (l *Logic) toInfoRes(item commentrepo.Comment) InfoRes {
 		Commenter:       item.Commenter,
 		Content:         item.Content,
 		LikeCount:       item.LikeCount,
+		ReplyCount:      item.ReplyCount,
 		CreatedAt:       item.CreateTime,
 		commenterName:   item.CommenterName,
 		commenterAvatar: item.CommenterAvatar,
@@ -339,17 +346,14 @@ func (l *Logic) HandleUserUpdated(ctx context.Context, payload []byte) error {
 	return nil
 }
 
-// fillLiked 批量补当前用户对顶层评论和子评论的点赞状态
+// fillLiked 批量补当前用户对评论的点赞状态
 func (l *Logic) fillLiked(ctx context.Context, list []InfoRes, userID uint64) error {
-	ids := make([]uint64, 0, len(list)*2)
-	for i := range list {
-		ids = append(ids, list[i].Id)
-		for j := range list[i].Replies {
-			ids = append(ids, list[i].Replies[j].Id)
-		}
-	}
-	if len(ids) == 0 {
+	if len(list) == 0 {
 		return nil
+	}
+	ids := make([]uint64, len(list))
+	for i := range list {
+		ids[i] = list[i].Id
 	}
 	liked, err := l.likes.FilterLiked(ctx, likeevent.TargetComment, userID, ids)
 	if err != nil {
@@ -357,9 +361,6 @@ func (l *Logic) fillLiked(ctx context.Context, list []InfoRes, userID uint64) er
 	}
 	for i := range list {
 		list[i].IsLiked = liked[list[i].Id]
-		for j := range list[i].Replies {
-			list[i].Replies[j].IsLiked = liked[list[i].Replies[j].Id]
-		}
 	}
 	return nil
 }

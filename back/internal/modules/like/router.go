@@ -36,11 +36,11 @@ func RegisterHTTP(r *gin.Engine, ctx *svc.ServiceContext) (*gin.Engine, error) {
 	return r, nil
 }
 
-// RegisterConsumers 订阅点赞事件维护关系表，以及删除事件清理点赞
+// RegisterConsumers 订阅点赞事件维护关系表，以及视频删除事件清理点赞。
+// 评论删除时的点赞清理已由评论模块同步完成，不再走事件
 func RegisterConsumers(sub *consumer.Consumer, ctx *svc.ServiceContext) error {
 	moduleLogic := NewLogic(ctx)
 	sub.Subscribe(topic.LikeSwitched, moduleLogic.HandleSwitched)
 	sub.Subscribe(topic.VideoDeleted, moduleLogic.HandleVideoDeleted)
-	sub.Subscribe(topic.CommentDeleted, moduleLogic.HandleCommentDeleted)
 	return nil
 }

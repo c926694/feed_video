@@ -40,6 +40,5 @@ export interface Comment {
   parentId: number;
   replyToUserId: number;
   replyToUserName: string;
-  replies: Comment[];
-  hasMoreReplies: boolean;
+  replyCount: number;
 }
