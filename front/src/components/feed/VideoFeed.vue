@@ -35,7 +35,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
-import { fetchFeedVideos, fetchFollowVideos, fetchHotVideos, switchFollow, switchVideoLike } from "@/api";
+import { fetchFeedVideos, fetchFollowVideos, fetchHotVideos, switchFollow, setVideoLike } from "@/api";
 import CommentDrawer from "@/components/feed/CommentDrawer.vue";
 import VideoCard from "@/components/feed/VideoCard.vue";
 import type { Video } from "@/types/domain";
@@ -243,7 +243,12 @@ async function loadMore() {
 }
 
 async function toggleLike(videoId: number) {
-  const targetLiked = await switchVideoLike(videoId);
+  const current =
+    recommendVideos.value.find((item) => item.id === videoId) ??
+    followVideos.value.find((item) => item.id === videoId) ??
+    hotVideos.value.find((item) => item.id === videoId);
+  if (!current) return;
+  const targetLiked = await setVideoLike(videoId, !current.liked);
   const patch = (videos: Video[]) =>
     videos.map((item) => {
       if (item.id !== videoId) return item;

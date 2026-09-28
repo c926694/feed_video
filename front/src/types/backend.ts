@@ -68,6 +68,12 @@ export interface RawComment {
   is_liked?: boolean;
   is_favorite?: boolean;
   created_at?: string;
+  parent_id?: number;
+  reply_to_id?: number;
+  reply_to_user_id?: number;
+  reply_to_user_name?: string;
+  has_more_replies?: boolean;
+  replies?: RawComment[];
   author?: RawUser;
   user?: RawUser;
   [key: string]: unknown;

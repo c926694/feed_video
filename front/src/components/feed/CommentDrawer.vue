@@ -1,9 +1,9 @@
-﻿<template>
+<template>
   <transition name="drawer">
     <section v-if="open" class="mask" @click.self="$emit('close')">
       <div class="sheet">
         <header>
-          <h4>评论 {{ comments.length }}</h4>
+          <h4>评论</h4>
           <button @click="$emit('close')">关闭</button>
         </header>
 
@@ -21,12 +21,38 @@
                 </svg>
                 <span>{{ item.likeCount }}</span>
               </button>
+              <button class="reply-btn" @click="startReply(item.id, 0, item.author.username || item.author.nickname)">回复</button>
             </small>
+
+            <ul v-if="item.replies.length" class="replies">
+              <li v-for="reply in item.replies" :key="reply.id">
+                <span class="reply-author">{{ reply.author.username || reply.author.nickname }}</span>
+                <span v-if="reply.replyToUserName" class="reply-to">回复 @{{ reply.replyToUserName }}</span>
+                <p>{{ reply.content }}</p>
+                <small>
+                  <button class="like-btn" :class="{ active: reply.liked }" @click="onReplyLike(item.id, reply.id)">
+                    <svg viewBox="0 0 24 24" class="icon-svg" aria-hidden="true">
+                      <path d="M12 20.2 4.9 13.7a4.9 4.9 0 0 1 6.9-7L12 7.9l.2-.2a4.9 4.9 0 0 1 6.9 7L12 20.2Z" />
+                    </svg>
+                    <span>{{ reply.likeCount }}</span>
+                  </button>
+                  <button class="reply-btn" @click="startReply(item.id, reply.id, reply.author.username || reply.author.nickname)">回复</button>
+                </small>
+              </li>
+            </ul>
+            <button v-if="item.hasMoreReplies" class="more-btn" @click="loadMoreReplies(item)">
+              展开更多回复
+            </button>
           </li>
         </ul>
+        <button v-if="hasMore" class="load-btn" @click="loadMore">加载更多评论</button>
 
         <form class="composer" @submit.prevent="submitComment">
-          <input v-model.trim="draft" placeholder="写下你的评论..." />
+          <input
+            v-model.trim="draft"
+            :placeholder="replyTarget ? `回复 @${replyTarget.name}` : '写下你的评论...'"
+          />
+          <button v-if="replyTarget" class="cancel-reply" type="button" @click="replyTarget = null">取消</button>
           <button :disabled="sending || !draft" type="submit">{{ sending ? "发送中" : "发送" }}</button>
         </form>
       </div>
@@ -36,7 +62,7 @@
 
 <script setup lang="ts">
 import { ref, watch } from "vue";
-import { createComment, fetchCommentList, switchCommentLike } from "@/api";
+import { createComment, fetchCommentList, fetchReplyList, setCommentLike } from "@/api";
 import type { Comment } from "@/types/domain";
 import { useToast } from "@/composables/useToast";
 
@@ -54,15 +80,44 @@ const { showToast } = useToast();
 const comments = ref<Comment[]>([]);
 const draft = ref("");
 const sending = ref(false);
+const cursor = ref<{ lastCreatedAt: number; lastId: number } | null>(null);
+const hasMore = ref(false);
+const replyTarget = ref<{ id: number; replyToId: number; name: string } | null>(null);
+
+async function loadFirstPage() {
+  const page = await fetchCommentList(props.videoId);
+  comments.value = page.comments;
+  cursor.value = page.lastId ? { lastCreatedAt: page.lastCreatedAt, lastId: page.lastId } : null;
+  hasMore.value = page.hasMore;
+}
 
 watch(
   () => props.open,
   async (isOpen) => {
     if (!isOpen || !props.videoId) return;
-    comments.value = await fetchCommentList(props.videoId);
+    replyTarget.value = null;
+    await loadFirstPage();
   },
   { immediate: true }
 );
+
+async function loadMore() {
+  if (!cursor.value) return;
+  const page = await fetchCommentList(props.videoId, cursor.value);
+  comments.value = comments.value.concat(page.comments);
+  cursor.value = page.lastId ? { lastCreatedAt: page.lastCreatedAt, lastId: page.lastId } : null;
+  hasMore.value = page.hasMore;
+}
+
+async function loadMoreReplies(item: Comment) {
+  const page = await fetchReplyList(item.id);
+  item.replies = page.comments;
+  item.hasMoreReplies = page.hasMore;
+}
+
+function startReply(commentId: number, replyToId: number, name: string) {
+  replyTarget.value = { id: commentId, replyToId, name };
+}
 
 async function submitComment() {
   if (!draft.value || !props.videoId) return;
@@ -70,10 +125,12 @@ async function submitComment() {
   try {
     await createComment({
       video_id: props.videoId,
-      content: draft.value
+      content: draft.value,
+      ...(replyTarget.value ? { parent_id: replyTarget.value.id, reply_to_id: replyTarget.value.replyToId } : {})
     });
     draft.value = "";
-    comments.value = await fetchCommentList(props.videoId);
+    replyTarget.value = null;
+    await loadFirstPage();
     showToast("评论成功");
   } finally {
     sending.value = false;
@@ -81,9 +138,27 @@ async function submitComment() {
 }
 
 async function onLike(commentId: number) {
-  const targetLiked = await switchCommentLike(commentId);
+  const current = comments.value.find((item) => item.id === commentId);
+  if (!current) return;
+  const targetLiked = await setCommentLike(commentId, !current.liked);
   comments.value = comments.value.map((item) =>
     item.id === commentId
+      ? {
+          ...item,
+          liked: targetLiked,
+          likeCount: Math.max(0, item.likeCount + ((targetLiked ? 1 : 0) - (item.liked ? 1 : 0)))
+        }
+      : item
+  );
+}
+
+async function onReplyLike(parentId: number, replyId: number) {
+  const parent = comments.value.find((item) => item.id === parentId);
+  const current = parent?.replies.find((item) => item.id === replyId);
+  if (!parent || !current) return;
+  const targetLiked = await setCommentLike(replyId, !current.liked);
+  parent.replies = parent.replies.map((item) =>
+    item.id === replyId
       ? {
           ...item,
           liked: targetLiked,
@@ -171,7 +246,8 @@ p {
   margin: 8px 0;
 }
 
-.like-btn {
+.like-btn,
+.reply-btn {
   border: none;
   color: var(--text-muted);
   background: transparent;
@@ -185,15 +261,59 @@ p {
   color: #ff5d7a;
 }
 
+.reply-btn {
+  margin-left: 14px;
+}
+
 .icon-svg {
   width: 16px;
   height: 16px;
   fill: currentColor;
 }
 
+.replies {
+  margin: 8px 0 0;
+  padding: 8px 0 0 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  list-style: none;
+}
+
+.replies li {
+  padding: 8px 0;
+  border-bottom: none;
+}
+
+.reply-author {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.reply-to {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.replies p {
+  margin: 4px 0;
+}
+
+.more-btn,
+.load-btn {
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-size: 12px;
+  padding: 6px 0;
+  display: block;
+}
+
+.load-btn {
+  margin: 0 14px;
+}
+
 .composer {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr auto auto;
   gap: 8px;
   padding: 12px 14px calc(12px + var(--safe-bottom));
   border-top: 1px solid var(--line);
@@ -213,6 +333,12 @@ input {
   background: var(--accent);
   color: #fff;
   padding: 0 16px;
+}
+
+.composer .cancel-reply {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--line);
 }
 
 .drawer-enter-active,

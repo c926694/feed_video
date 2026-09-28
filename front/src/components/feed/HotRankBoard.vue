@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <section class="hot-board">
     <div class="hero-shell">
       <div class="hero-copy">
@@ -68,7 +68,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { fetchHotVideos, switchVideoLike } from "@/api";
+import { fetchHotVideos, setVideoLike } from "@/api";
 import CommentDrawer from "@/components/feed/CommentDrawer.vue";
 import { useToast } from "@/composables/useToast";
 import type { Video } from "@/types/domain";
@@ -135,7 +135,9 @@ async function loadMore() {
 }
 
 async function toggleLike(videoId: number) {
-  const targetLiked = await switchVideoLike(videoId);
+  const current = videos.value.find((item) => item.id === videoId);
+  if (!current) return;
+  const targetLiked = await setVideoLike(videoId, !current.liked);
   videos.value = videos.value.map((item) => {
     if (item.id !== videoId) return item;
     const delta = (targetLiked ? 1 : 0) - (item.liked ? 1 : 0);

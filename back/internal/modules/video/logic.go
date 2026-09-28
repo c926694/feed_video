@@ -33,11 +33,10 @@ import (
 )
 
 const (
-	infoLogicalTTL     = 5 * time.Minute
-	infoNullLogicalTTL = 2 * time.Minute
-	infoRebuildLockTTL = 10 * time.Second
-	infoMissRetryTimes = 8
-	infoMissRetrySleep = 30 * time.Millisecond
+	infoLogicalTTL       = 5 * time.Minute        // 详情记录的新鲜度上界
+	infoRebuildLockTTL   = 10 * time.Second       // 重建互斥锁的持有上限
+	infoRefreshTimeout   = 3 * time.Second        // 后台重建的超时
+	infoInvalidateMaxIDs = 2000                   // 资料变更时批量清理缓存的视频数上限
 
 	coverMaxSize = 10 << 20 // 封面最大 10MB
 	videoMaxSize = 10 << 30 // 视频最大 10GB
@@ -156,7 +155,7 @@ func (l *Logic) UpdateStatus(ctx context.Context, videoID uint64, userID uint64,
 		}
 		return nil, nil
 	case videorepo.StatusFailed:
-		if _, err := l.markStatus(ctx, videoID, userID, videorepo.StatusCreated, videorepo.StatusFailed); err != nil {
+		if _, _, err := l.transitionStatus(ctx, videoID, userID, videorepo.StatusCreated, videorepo.StatusFailed); err != nil {
 			return nil, err
 		}
 		return nil, nil
@@ -164,7 +163,7 @@ func (l *Logic) UpdateStatus(ctx context.Context, videoID uint64, userID uint64,
 		if l.sts == nil {
 			return nil, httpx.New(httpx.CodeInternal, "直传服务未配置")
 		}
-		item, err := l.markStatus(ctx, videoID, userID, videorepo.StatusFailed, videorepo.StatusCreated)
+		item, _, err := l.transitionStatus(ctx, videoID, userID, videorepo.StatusFailed, videorepo.StatusCreated)
 		if err != nil {
 			return nil, err
 		}
@@ -197,7 +196,7 @@ func (l *Logic) publish(ctx context.Context, videoID uint64, userID uint64) erro
 	if coverSize > coverMaxSize {
 		return httpx.New(httpx.CodeBadRequest, "封面不能超过 10MB")
 	}
-	migrated, err := l.videos.MarkStatus(ctx, videoID, userID, videorepo.StatusCreated, videorepo.StatusPublished)
+	_, migrated, err := l.transitionStatus(ctx, videoID, userID, videorepo.StatusCreated, videorepo.StatusPublished)
 	if err != nil {
 		return err
 	}
@@ -212,16 +211,41 @@ func (l *Logic) publish(ctx context.Context, videoID uint64, userID uint64) erro
 	})
 }
 
-// markStatus 校验归属后做状态迁移，返回迁移前的记录，迁移幂等
-func (l *Logic) markStatus(ctx context.Context, videoID uint64, userID uint64, from string, to string) (*videorepo.Video, error) {
+// transitionStatus 状态迁移的统一入口：条件更新成功后刷新缓存。
+// 返回迁移前的记录和是否真的发生了迁移，迁移幂等
+func (l *Logic) transitionStatus(ctx context.Context, videoID uint64, userID uint64, from string, to string) (*videorepo.Video, bool, error) {
 	item, err := l.getOwnVideo(ctx, videoID, userID, "只能操作自己的视频")
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	if _, err = l.videos.MarkStatus(ctx, videoID, userID, from, to); err != nil {
-		return nil, err
+	migrated, err := l.videos.MarkStatus(ctx, videoID, userID, from, to)
+	if err != nil {
+		return nil, false, err
 	}
-	return item, nil
+	if !migrated {
+		return item, false, nil
+	}
+	if err = l.refreshInfoCache(ctx, item, to); err != nil {
+		slog.Error("刷新视频详情缓存失败", "video_id", videoID, "status", to, "error", err)
+	}
+	return item, true, nil
+}
+
+// refreshInfoCache 状态迁移后刷新详情缓存：先删保证正确性，
+// 只有迁移到 published 才写预热记录，让发布后的第一个读者不用回源
+func (l *Logic) refreshInfoCache(ctx context.Context, item *videorepo.Video, status string) error {
+	if err := l.videos.DeleteInfoCache(ctx, item.ID); err != nil {
+		return err
+	}
+	if status != videorepo.StatusPublished {
+		return nil
+	}
+	item.Status = status
+	entry := toCacheEntry(l.toInfoRes(*item))
+	return l.videos.SetInfoCache(ctx, item.ID, videorepo.InfoCache{
+		Entry:    &entry,
+		ExpireAt: time.Now().Add(infoLogicalTTL).Unix(),
+	})
 }
 
 // getOwnVideo 查视频并校验属于当前用户
@@ -294,6 +318,7 @@ func (l *Logic) GetVideoInfo(ctx context.Context, videoID uint64, userID uint64)
 	if info.Status != videorepo.StatusPublished {
 		return InfoRes{}, httpx.New(httpx.CodeNotFound, "视频不存在")
 	}
+
 	list := []InfoRes{info}
 	if err = l.fillLiked(ctx, list, userID); err != nil {
 		return InfoRes{}, err
@@ -315,11 +340,14 @@ func (l *Logic) DeleteVideo(ctx context.Context, videoID uint64, userID uint64) 
 	if item.AuthorID != userID {
 		return httpx.New(httpx.CodeForbidden, "只能删除自己发布的视频")
 	}
-	if err = l.videos.Delete(ctx, videoID); err != nil {
+
+	// 先删缓存，再删数据库行：缓存删失败直接返回错误，行还在，用户重试安全。
+	// 反过来先删行的话，删缓存失败会留下一条仍然可见已删除内容的记录
+	if err = l.videos.DeleteInfoCache(ctx, videoID); err != nil {
 		return err
 	}
-	if err = l.videos.DeleteInfoCache(ctx, videoID); err != nil {
-		slog.Error("清理视频信息缓存失败", "video_id", videoID, "error", err)
+	if err = l.videos.Delete(ctx, videoID); err != nil {
+		return err
 	}
 
 	if item.Status != videorepo.StatusPublished {
@@ -364,6 +392,7 @@ func (l *Logic) HandleLikeSwitched(ctx context.Context, payload []byte) error {
 		slog.Error("对账视频点赞数失败", "video_id", switched.TargetID, "error", err)
 		return err
 	}
+	// 点赞数变了，让详情缓存失效，下一次读重新回源
 	return l.videos.DeleteInfoCache(ctx, switched.TargetID)
 }
 
@@ -402,6 +431,7 @@ func (l *Logic) syncCommentCount(ctx context.Context, videoID uint64) error {
 		slog.Error("对账视频评论数失败", "video_id", videoID, "error", err)
 		return err
 	}
+	// 评论数变了，让详情缓存失效，下一次读重新回源
 	return l.videos.DeleteInfoCache(ctx, videoID)
 }
 
@@ -465,82 +495,63 @@ func (l *Logic) fillFollowed(ctx context.Context, list []InfoRes, userID uint64)
 	return nil
 }
 
+// getInfoWithCache 读详情缓存：命中返回记录，空值标记返回不存在，键不存在回源
 func (l *Logic) getInfoWithCache(ctx context.Context, videoID uint64) (InfoRes, bool, error) {
-	cache, err := l.videos.GetInfoCache(ctx, videoID)
+	record, found, err := l.videos.GetInfoCache(ctx, videoID)
 	if err != nil {
 		return InfoRes{}, false, err
 	}
-	if cache == nil {
-		return l.rebuildInfoCacheOnMiss(ctx, videoID)
+	if !found {
+		// 键不存在，没有旧值可以返回，直接回源
+		return l.loadInfoFromDBAndWriteCache(ctx, videoID)
 	}
-	if cache.ExpireAt <= time.Now().Unix() {
-		l.tryRefreshInfoCacheAsync(videoID)
-	}
-	if cache.Empty {
+	if record == nil {
+		// 空值标记有效期内直接返回不存在
 		return InfoRes{}, false, nil
 	}
-	if cache.Entry == nil {
-		return l.rebuildInfoCacheOnMiss(ctx, videoID)
+	if record.ExpireAt <= time.Now().Unix() {
+		// 逻辑过期：本请求返回旧值，重建交给后台
+		l.triggerInfoRefresh(videoID)
 	}
-	return l.fromCacheEntry(*cache.Entry), true, nil
+	return l.fromCacheEntry(*record.Entry), true, nil
 }
 
-func (l *Logic) rebuildInfoCacheOnMiss(ctx context.Context, videoID uint64) (InfoRes, bool, error) {
-	for i := 0; i < infoMissRetryTimes; i++ {
-		token, locked, err := l.videos.TryLockRebuild(ctx, videoID, infoRebuildLockTTL)
-		if err != nil {
-			return InfoRes{}, false, err
-		}
-		if locked {
-			defer func() { _ = l.videos.UnlockRebuild(ctx, videoID, token) }()
-			return l.loadInfoFromDBAndWriteCache(ctx, videoID)
-		}
-
-		time.Sleep(infoMissRetrySleep)
-		cache, getErr := l.videos.GetInfoCache(ctx, videoID)
-		if getErr != nil {
-			return InfoRes{}, false, getErr
-		}
-		if cache == nil {
-			continue
-		}
-		if cache.Empty {
-			return InfoRes{}, false, nil
-		}
-		if cache.Entry != nil {
-			return l.fromCacheEntry(*cache.Entry), true, nil
-		}
-	}
-	return l.loadInfoFromDBAndWriteCache(ctx, videoID)
-}
-
-func (l *Logic) tryRefreshInfoCacheAsync(videoID uint64) {
-	ctx := context.Background()
-	token, locked, err := l.videos.TryLockRebuild(ctx, videoID, infoRebuildLockTTL)
-	if err != nil || !locked {
-		return
-	}
+// triggerInfoRefresh 后台重建：抢到锁的做，没抢到的直接结束。
+// 锁的获取放进 goroutine，请求路径上连一次 SET NX 都不花
+func (l *Logic) triggerInfoRefresh(videoID uint64) {
 	go func() {
-		defer func() { _ = l.videos.UnlockRebuild(ctx, videoID, token) }()
-		_, _, _ = l.loadInfoFromDBAndWriteCache(ctx, videoID)
+		token, locked, err := l.videos.TryLockRebuild(context.Background(), videoID, infoRebuildLockTTL)
+		if err != nil || !locked {
+			return
+		}
+		defer func() { _ = l.videos.UnlockRebuild(context.Background(), videoID, token) }()
+
+		refreshCtx, cancel := context.WithTimeout(context.Background(), infoRefreshTimeout)
+		defer cancel()
+		if _, _, err := l.loadInfoFromDBAndWriteCache(refreshCtx, videoID); err != nil {
+			slog.Error("后台刷新视频详情缓存失败", "video_id", videoID, "error", err)
+		}
 	}()
 }
 
+// loadInfoFromDBAndWriteCache 重建缓存：读视频行写回详情记录。
+// 行不存在写空值标记；未发布的行不写缓存，只返回不可见
 func (l *Logic) loadInfoFromDBAndWriteCache(ctx context.Context, videoID uint64) (InfoRes, bool, error) {
 	item, err := l.videos.GetByID(ctx, videoID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			setErr := l.videos.SetInfoCache(ctx, videoID, videorepo.InfoCache{
-				Empty:    true,
-				ExpireAt: time.Now().Add(infoNullLogicalTTL).Unix(),
-			})
-			if setErr != nil {
+			if setErr := l.videos.SetInfoMiss(ctx, videoID); setErr != nil {
 				return InfoRes{}, false, setErr
 			}
 			return InfoRes{}, false, nil
 		}
 		return InfoRes{}, false, err
 	}
+	if item.Status != videorepo.StatusPublished {
+		// 未发布的不进缓存，只返回不可见
+		return InfoRes{}, false, nil
+	}
+
 	info := l.toInfoRes(*item)
 	entry := toCacheEntry(info)
 	if err = l.videos.SetInfoCache(ctx, videoID, videorepo.InfoCache{
@@ -586,7 +597,7 @@ func toCacheEntry(info InfoRes) videorepo.InfoCacheEntry {
 	}
 }
 
-// HandleUserUpdated 订阅用户资料变更，刷新自己表里冗余的作者展示字段
+// HandleUserUpdated 订阅用户资料变更，刷新冗余的作者展示字段并清理详情缓存
 func (l *Logic) HandleUserUpdated(ctx context.Context, payload []byte) error {
 	var updated userevent.UpdatedEvent
 	if err := json.Unmarshal(payload, &updated); err != nil {
@@ -597,6 +608,18 @@ func (l *Logic) HandleUserUpdated(ctx context.Context, payload []byte) error {
 	}
 	if err := l.videos.UpdateAuthorInfo(ctx, updated.UserID, updated.Nickname, updated.AvatarURL); err != nil {
 		slog.Error("刷新视频作者信息失败", "author_id", updated.UserID, "error", err)
+		return err
+	}
+
+	// 昵称头像存在详情记录里，MySQL 改完之后把这些记录的缓存删掉，
+	// 超出上限的部分由逻辑过期兜住
+	ids, err := l.videos.ListIDsByAuthor(ctx, updated.UserID, infoInvalidateMaxIDs)
+	if err != nil {
+		slog.Error("列出作者视频失败", "author_id", updated.UserID, "error", err)
+		return err
+	}
+	if err = l.videos.DeleteInfoCacheBatch(ctx, ids); err != nil {
+		slog.Error("批量清理视频详情缓存失败", "author_id", updated.UserID, "error", err)
 		return err
 	}
 	return nil

@@ -15,6 +15,7 @@ const (
 	infoCacheKeyFormat = "cache:video:info:%d"
 	infoLockKeyFormat  = "lock:video:info:%d"
 	infoPhysicalTTL    = 24 * time.Hour
+	infoMissTTL        = 2 * time.Minute
 )
 
 // 视频发布状态
@@ -42,7 +43,7 @@ type Video struct {
 	UpdateTime   time.Time `gorm:"column:updated_at;default:CURRENT_TIMESTAMP(3)" json:"updated_at"`
 }
 
-// InfoCacheEntry 视频信息缓存里的一条记录
+// InfoCacheEntry 视频详情缓存里的一条记录
 type InfoCacheEntry struct {
 	ID           uint64    `json:"id"`
 	AuthorID     uint64    `json:"author_id"`
@@ -58,10 +59,9 @@ type InfoCacheEntry struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
-// InfoCache 带逻辑过期时间的缓存记录，Empty 表示这是一个空值缓存
+// InfoCache 带逻辑过期时间的详情缓存记录
 type InfoCache struct {
 	Entry    *InfoCacheEntry `json:"data,omitempty"`
-	Empty    bool            `json:"empty"`
 	ExpireAt int64           `json:"expire_at"`
 }
 
@@ -115,6 +115,17 @@ func (r *Repo) ListByAuthor(ctx context.Context, authorID uint64, limit uint64) 
 		Limit(int(limit)).
 		Find(&items).Error
 	return items, err
+}
+
+// ListIDsByAuthor 按作者列出最近发布的视频 ID，供资料变更时批量清理缓存
+func (r *Repo) ListIDsByAuthor(ctx context.Context, authorID uint64, limit int) ([]uint64, error) {
+	ids := make([]uint64, 0, limit)
+	err := r.db.WithContext(ctx).Model(&Video{}).
+		Where("author_id = ?", authorID).
+		Order("id desc").
+		Limit(limit).
+		Pluck("id", &ids).Error
+	return ids, err
 }
 
 func (r *Repo) CountByAuthor(ctx context.Context, authorID uint64) (int64, error) {
@@ -185,21 +196,31 @@ func (r *Repo) UpdateAuthorInfo(ctx context.Context, authorID uint64, authorName
 	return r.db.WithContext(ctx).Model(&Video{}).Where("author_id = ?", authorID).Updates(updates).Error
 }
 
-// GetInfoCache 读取视频信息缓存，返回 nil 表示缓存里没有
-func (r *Repo) GetInfoCache(ctx context.Context, videoID uint64) (*InfoCache, error) {
+// GetInfoCache 读详情缓存，返回三种状态：
+// found 为 false 表示键不存在，需要回源；
+// found 为 true 且 record 为 nil 表示空值标记，MySQL 里没有这一行；
+// found 为 true 且 record 非 nil 表示缓存命中。
+func (r *Repo) GetInfoCache(ctx context.Context, videoID uint64) (*InfoCache, bool, error) {
 	raw, err := r.redisClient.Get(ctx, infoCacheKey(videoID)).Result()
 	if err == redis.Nil {
-		return nil, nil
+		return nil, false, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	var cache InfoCache
-	if err = json.Unmarshal([]byte(raw), &cache); err != nil {
+	if raw == "" {
+		return nil, true, nil
+	}
+	var record InfoCache
+	if unmarshalErr := json.Unmarshal([]byte(raw), &record); unmarshalErr != nil {
 		_ = r.redisClient.Del(ctx, infoCacheKey(videoID)).Err()
-		return nil, nil
+		return nil, false, nil
 	}
-	return &cache, nil
+	if record.Entry == nil {
+		// Entry 为 nil 的历史空值记录按空值标记处理
+		return nil, true, nil
+	}
+	return &record, true, nil
 }
 
 // SetInfoCache 写入视频信息缓存，实际有效期远长于记录里的逻辑过期时间
@@ -211,9 +232,26 @@ func (r *Repo) SetInfoCache(ctx context.Context, videoID uint64, cache InfoCache
 	return r.redisClient.Set(ctx, infoCacheKey(videoID), data, infoPhysicalTTL).Err()
 }
 
-// DeleteInfoCache 让缓存失效
+// SetInfoMiss 键不存在时写空值标记，纯物理过期，不需要逻辑过期
+func (r *Repo) SetInfoMiss(ctx context.Context, videoID uint64) error {
+	return r.redisClient.Set(ctx, infoCacheKey(videoID), "", infoMissTTL).Err()
+}
+
+// DeleteInfoCache 让详情缓存失效
 func (r *Repo) DeleteInfoCache(ctx context.Context, videoID uint64) error {
 	return r.redisClient.Del(ctx, infoCacheKey(videoID)).Err()
+}
+
+// DeleteInfoCacheBatch 批量删除详情缓存，用于资料变更时清理该作者全部视频
+func (r *Repo) DeleteInfoCacheBatch(ctx context.Context, videoIDs []uint64) error {
+	if len(videoIDs) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(videoIDs))
+	for _, videoID := range videoIDs {
+		keys = append(keys, infoCacheKey(videoID))
+	}
+	return r.redisClient.Del(ctx, keys...).Err()
 }
 
 // TryLockRebuild 尝试取到重建缓存的锁，返回的 token 用于解锁

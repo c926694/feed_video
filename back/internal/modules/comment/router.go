@@ -35,6 +35,7 @@ func RegisterHTTP(r *gin.Engine, ctx *svc.ServiceContext) (*gin.Engine, error) {
 		group.POST("", ctx.Auth.Middleware(), controller.Create)
 		group.DELETE("/:id", ctx.Auth.Middleware(), controller.Delete)
 		group.GET("/list/:videoId", ctx.Auth.Middleware(), controller.List)
+		group.GET("/replies/:id", ctx.Auth.Middleware(), controller.ListReplies)
 	}
 	return r, nil
 }

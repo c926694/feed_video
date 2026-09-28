@@ -37,4 +37,9 @@ export interface Comment {
   liked: boolean;
   createdAt: string;
   author: User;
+  parentId: number;
+  replyToUserId: number;
+  replyToUserName: string;
+  replies: Comment[];
+  hasMoreReplies: boolean;
 }

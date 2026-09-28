@@ -1,6 +1,7 @@
 import { http } from "@/utils/http";
 import { normalizeComment, unwrapData } from "@/utils/normalize";
 import type { RawComment } from "@/types/backend";
+import type { Comment } from "@/types/domain";
 
 function pickCommentList(source: unknown): RawComment[] {
   if (Array.isArray(source)) return source as RawComment[];
@@ -11,13 +12,52 @@ function pickCommentList(source: unknown): RawComment[] {
   return (found as RawComment[] | undefined) ?? [];
 }
 
-export async function fetchCommentList(videoId: number) {
-  const { data } = await http.get(`/comments/list/${videoId}`);
-  const body = unwrapData<unknown>(data);
-  return pickCommentList(body).map(normalizeComment);
+export interface CommentPage {
+  comments: Comment[];
+  lastCreatedAt: number;
+  lastId: number;
+  hasMore: boolean;
 }
 
-export async function createComment(payload: { video_id: number; content: string }) {
+export interface CommentCursor {
+  lastCreatedAt?: number;
+  lastId?: number;
+}
+
+function toCommentPage(body: unknown): CommentPage {
+  const payload = typeof body === "object" && body ? (body as Record<string, unknown>) : {};
+  return {
+    comments: pickCommentList(body).map(normalizeComment),
+    lastCreatedAt: Number(payload.last_created_at ?? 0),
+    lastId: Number(payload.last_id ?? 0),
+    hasMore: Boolean(payload.has_more)
+  };
+}
+
+export async function fetchCommentList(videoId: number, cursor?: CommentCursor): Promise<CommentPage> {
+  const { data } = await http.get(`/comments/list/${videoId}`, {
+    params: {
+      ...(cursor?.lastId ? { last_created_at: cursor.lastCreatedAt, last_id: cursor.lastId } : {})
+    }
+  });
+  return toCommentPage(unwrapData<unknown>(data));
+}
+
+export async function fetchReplyList(commentId: number, cursor?: CommentCursor): Promise<CommentPage> {
+  const { data } = await http.get(`/comments/replies/${commentId}`, {
+    params: {
+      ...(cursor?.lastId ? { last_created_at: cursor.lastCreatedAt, last_id: cursor.lastId } : {})
+    }
+  });
+  return toCommentPage(unwrapData<unknown>(data));
+}
+
+export async function createComment(payload: {
+  video_id: number;
+  content: string;
+  parent_id?: number;
+  reply_to_id?: number;
+}) {
   await http.post("/comments", payload);
 }
 

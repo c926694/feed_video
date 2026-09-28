@@ -37,7 +37,7 @@
 <script setup lang="ts">
 import { nextTick, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { deleteVideo, fetchMyVideos, switchVideoLike } from "@/api";
+import { deleteVideo, fetchMyVideos, setVideoLike } from "@/api";
 import CommentDrawer from "@/components/feed/CommentDrawer.vue";
 import VideoCard from "@/components/feed/VideoCard.vue";
 import { useToast } from "@/composables/useToast";
@@ -95,7 +95,9 @@ function openComment(videoId: number) {
 }
 
 async function toggleLike(videoId: number) {
-  const targetLiked = await switchVideoLike(videoId);
+  const current = videos.value.find((item) => item.id === videoId);
+  if (!current) return;
+  const targetLiked = await setVideoLike(videoId, !current.liked);
   videos.value = videos.value.map((item) => {
     if (item.id !== videoId) return item;
     const delta = (targetLiked ? 1 : 0) - (item.liked ? 1 : 0);

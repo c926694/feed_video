@@ -30,7 +30,8 @@ type Logic struct {
 	producer *producer.Producer
 }
 
-func (l *Logic) SwitchVideoLike(ctx context.Context, videoID uint64, userID uint64) (bool, error) {
+// SetVideoLike 把点赞状态设置成目标态，幂等：重复设置同一目标态不发事件
+func (l *Logic) SetVideoLike(ctx context.Context, videoID uint64, userID uint64, active bool) (bool, error) {
 	video, err := l.videos.GetByID(ctx, videoID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -41,38 +42,44 @@ func (l *Logic) SwitchVideoLike(ctx context.Context, videoID uint64, userID uint
 	if video.Status != videorepo.StatusPublished {
 		return false, httpx.New(httpx.CodeNotFound, "视频不存在")
 	}
-	return l.switchLike(ctx, event.TargetVideo, videoID, userID)
+	return l.setLike(ctx, event.TargetVideo, videoID, userID, active)
 }
 
-func (l *Logic) SwitchCommentLike(ctx context.Context, commentID uint64, userID uint64) (bool, error) {
+// SetCommentLike 把评论点赞状态设置成目标态，幂等
+func (l *Logic) SetCommentLike(ctx context.Context, commentID uint64, userID uint64, active bool) (bool, error) {
 	if _, err := l.comments.GetByID(ctx, commentID); err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return false, httpx.New(httpx.CodeNotFound, "评论不存在")
 		}
 		return false, err
 	}
-	return l.switchLike(ctx, event.TargetComment, commentID, userID)
+	return l.setLike(ctx, event.TargetComment, commentID, userID, active)
 }
 
-func (l *Logic) switchLike(ctx context.Context, target string, targetID uint64, userID uint64) (bool, error) {
-	liked, err := l.repo.Switch(ctx, target, targetID, userID)
+// setLike 把点赞状态设置成目标态。状态没变时幂等返回，不发事件；
+// 状态变了才发事件，发布失败时把状态写回之前的状态
+func (l *Logic) setLike(ctx context.Context, target string, targetID uint64, userID uint64, active bool) (bool, error) {
+	changed, err := l.repo.Set(ctx, target, targetID, userID, active)
 	if err != nil {
 		return false, err
 	}
+	if !changed {
+		// 本来就是目标态，幂等返回，不重复发事件
+		return active, nil
+	}
 
-	err = l.producer.Publish(ctx, topic.LikeSwitched, strconv.FormatUint(targetID, 10), event.SwitchedEvent{
+	if err = l.producer.Publish(ctx, topic.LikeSwitched, strconv.FormatUint(targetID, 10), event.SwitchedEvent{
 		Target:   target,
 		TargetID: targetID,
-		Liked:    liked,
+		Liked:    active,
 		Operator: userID,
-	})
-	if err != nil {
-		if rollbackErr := l.repo.Reset(ctx, target, targetID, userID, !liked); rollbackErr != nil {
+	}); err != nil {
+		if _, rollbackErr := l.repo.Set(ctx, target, targetID, userID, !active); rollbackErr != nil {
 			return false, httpx.New(httpx.CodeInternal, fmt.Sprintf("点赞状态回滚失败: %v", rollbackErr))
 		}
 		return false, err
 	}
-	return liked, nil
+	return active, nil
 }
 
 // HandleSwitched 订阅点赞切换事件，异步维护 user_like 表

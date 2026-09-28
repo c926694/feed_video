@@ -39,32 +39,32 @@ func (Like) TableName() string {
 	return "user_like"
 }
 
-var switchScript = redis.NewScript(`
-if redis.call("SISMEMBER", KEYS[1], ARGV[1]) == 1 then
-    redis.call("SREM", KEYS[1], ARGV[1])
+var setScript = redis.NewScript(`
+local want = tonumber(ARGV[2])
+local cur = redis.call("SISMEMBER", KEYS[1], ARGV[1])
+if cur == want then
     return 0
 end
-redis.call("SADD", KEYS[1], ARGV[1])
+if want == 1 then
+    redis.call("SADD", KEYS[1], ARGV[1])
+else
+    redis.call("SREM", KEYS[1], ARGV[1])
+end
 return 1
 `)
 
-// Switch 切换某个目标上的点赞状态，返回切换后的状态
-func (r *Repo) Switch(ctx context.Context, target string, targetID uint64, userID uint64) (bool, error) {
-	key := keyFor(target, targetID)
-	result, err := switchScript.Run(ctx, r.redisClient, []string{key}, userID).Int()
+// Set 把点赞状态设置成目标态，返回状态是否发生了变化。
+// 执行完之后集合状态必然等于目标态
+func (r *Repo) Set(ctx context.Context, target string, targetID uint64, userID uint64, active bool) (bool, error) {
+	val := "0"
+	if active {
+		val = "1"
+	}
+	result, err := setScript.Run(ctx, r.redisClient, []string{keyFor(target, targetID)}, userID, val).Int()
 	if err != nil {
 		return false, err
 	}
 	return result == 1, nil
-}
-
-// Reset 把状态恢复成切换之前的样子，用于事件发布失败时回滚
-func (r *Repo) Reset(ctx context.Context, target string, targetID uint64, userID uint64, liked bool) error {
-	key := keyFor(target, targetID)
-	if liked {
-		return r.redisClient.SAdd(ctx, key, userID).Err()
-	}
-	return r.redisClient.SRem(ctx, key, userID).Err()
 }
 
 // FilterLiked 批量查询用户是否点赞了这些目标

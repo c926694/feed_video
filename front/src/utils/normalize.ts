@@ -59,7 +59,12 @@ export function normalizeComment(raw?: RawComment | null): Comment {
     likeCount: toNumber(raw?.like_count ?? raw?.favorite_count),
     liked: Boolean(raw?.is_liked ?? raw?.is_favorite),
     createdAt: toString(raw?.created_at),
-    author: normalizeUser(raw?.author ?? raw?.user ?? fallbackAuthor)
+    author: normalizeUser(raw?.author ?? raw?.user ?? fallbackAuthor),
+    parentId: toNumber(raw?.parent_id),
+    replyToUserId: toNumber(raw?.reply_to_user_id),
+    replyToUserName: toString(raw?.reply_to_user_name),
+    replies: Array.isArray(raw?.replies) ? raw.replies.map(normalizeComment) : [],
+    hasMoreReplies: Boolean(raw?.has_more_replies)
   };
 }
 
