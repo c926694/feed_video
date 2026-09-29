@@ -1,5 +1,7 @@
 import { http } from "@/utils/http";
 import { unwrapData } from "@/utils/normalize";
+import { fetchVideoPage, type VideoCursor } from "./videoList";
+import type { VideoPage } from "@/types/domain";
 
 function pickIsLiked(payload: unknown) {
   const body = unwrapData<unknown>(payload);
@@ -22,4 +24,8 @@ export async function setCommentLike(commentId: number, active: boolean) {
     ? await http.post(`/likes/comment/${commentId}`)
     : await http.delete(`/likes/comment/${commentId}`);
   return pickIsLiked(data);
+}
+
+export function fetchMyLikes(cursor: VideoCursor = {}): Promise<VideoPage> {
+  return fetchVideoPage("/likes/me", cursor);
 }

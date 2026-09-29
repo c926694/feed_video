@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	favoriterepo "simple_tiktok/internal/modules/favorite/repo"
 	followrepo "simple_tiktok/internal/modules/follow/repo"
 	likerepo "simple_tiktok/internal/modules/like/repo"
 	userrepo "simple_tiktok/internal/modules/user/repo"
@@ -21,13 +22,14 @@ const Name = "video"
 // 别人的数据走别人的 repo，依赖全部来自进程级的 ServiceContext
 func NewLogic(ctx *svc.ServiceContext) *Logic {
 	return &Logic{
-		videos:   videorepo.New(ctx.DB, ctx.Redis),
-		users:    userrepo.New(ctx.DB),
-		likes:    likerepo.New(ctx.DB, ctx.Redis),
-		follows:  followrepo.New(ctx.DB, ctx.Redis),
-		producer: ctx.Producer,
-		uploader: ctx.Upload,
-		sts:      ctx.Sts,
+		videos:    videorepo.New(ctx.DB, ctx.Redis),
+		users:     userrepo.New(ctx.DB),
+		likes:     likerepo.New(ctx.DB, ctx.Redis),
+		favorites: favoriterepo.New(ctx.DB, ctx.Redis),
+		follows:   followrepo.New(ctx.DB, ctx.Redis),
+		producer:  ctx.Producer,
+		uploader:  ctx.Upload,
+		sts:       ctx.Sts,
 	}
 }
 
@@ -52,6 +54,7 @@ func RegisterConsumers(sub *consumer.Consumer, ctx *svc.ServiceContext) error {
 		return handleVideoDeleted(handlerCtx, payload, ctx.Upload)
 	})
 	sub.Subscribe(topic.LikeSwitched, moduleLogic.HandleLikeSwitched)
+	sub.Subscribe(topic.FavoriteSwitched, moduleLogic.HandleFavoriteSwitched)
 	sub.Subscribe(topic.UserUpdated, moduleLogic.HandleUserUpdated)
 	return nil
 }

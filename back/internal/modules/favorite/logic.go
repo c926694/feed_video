@@ -1,21 +1,20 @@
-package like
+package favorite
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"strconv"
 	"time"
 
 	"gorm.io/gorm"
 
-	commentrepo "simple_tiktok/internal/modules/comment/repo"
+	favoriteevent "simple_tiktok/internal/modules/favorite/event"
 	favoriterepo "simple_tiktok/internal/modules/favorite/repo"
+	likeevent "simple_tiktok/internal/modules/like/event"
+	likerepo "simple_tiktok/internal/modules/like/repo"
 	followrepo "simple_tiktok/internal/modules/follow/repo"
-	"simple_tiktok/internal/modules/like/event"
-	"simple_tiktok/internal/modules/like/repo"
 	videoevent "simple_tiktok/internal/modules/video/event"
 	videorepo "simple_tiktok/internal/modules/video/repo"
 	"simple_tiktok/internal/platform/httpx"
@@ -30,19 +29,18 @@ const (
 	maxListLimit     = 100
 )
 
-// Logic 点赞模块的业务逻辑
+// Logic 收藏模块的业务逻辑。收藏集合在 Redis，关系表由事件异步维护
 type Logic struct {
-	repo      *repo.Repo
-	videos    *videorepo.Repo
-	comments  *commentrepo.Repo
-	favorites *favoriterepo.Repo
-	follows   *followrepo.Repo
-	producer  *producer.Producer
-	uploader  *upload.Uploader
+	repo     *favoriterepo.Repo
+	videos   *videorepo.Repo
+	likes    *likerepo.Repo
+	follows  *followrepo.Repo
+	producer *producer.Producer
+	uploader *upload.Uploader
 }
 
-// SetVideoLike 把点赞状态设置成目标态，幂等：重复设置同一目标态不发事件
-func (l *Logic) SetVideoLike(ctx context.Context, videoID uint64, userID uint64, active bool) (bool, error) {
+// SetVideoFavorite 把收藏状态设置成目标态，幂等：重复设置同一目标态不发事件
+func (l *Logic) SetVideoFavorite(ctx context.Context, videoID uint64, userID uint64, active bool) (bool, error) {
 	video, err := l.videos.GetByID(ctx, videoID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -53,24 +51,13 @@ func (l *Logic) SetVideoLike(ctx context.Context, videoID uint64, userID uint64,
 	if video.Status != videorepo.StatusPublished {
 		return false, httpx.New(httpx.CodeNotFound, "视频不存在")
 	}
-	return l.setLike(ctx, event.TargetVideo, videoID, userID, active)
+	return l.setFavorite(ctx, videoID, userID, active)
 }
 
-// SetCommentLike 把评论点赞状态设置成目标态，幂等
-func (l *Logic) SetCommentLike(ctx context.Context, commentID uint64, userID uint64, active bool) (bool, error) {
-	if _, err := l.comments.GetByID(ctx, commentID); err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return false, httpx.New(httpx.CodeNotFound, "评论不存在")
-		}
-		return false, err
-	}
-	return l.setLike(ctx, event.TargetComment, commentID, userID, active)
-}
-
-// setLike 把点赞状态设置成目标态。状态没变时幂等返回，不发事件；
+// setFavorite 把收藏状态设置成目标态。状态没变时幂等返回，不发事件；
 // 状态变了才发事件，发布失败时把状态写回之前的状态
-func (l *Logic) setLike(ctx context.Context, target string, targetID uint64, userID uint64, active bool) (bool, error) {
-	changed, err := l.repo.Set(ctx, target, targetID, userID, active)
+func (l *Logic) setFavorite(ctx context.Context, videoID uint64, userID uint64, active bool) (bool, error) {
+	changed, err := l.repo.Set(ctx, videoID, userID, active)
 	if err != nil {
 		return false, err
 	}
@@ -79,29 +66,28 @@ func (l *Logic) setLike(ctx context.Context, target string, targetID uint64, use
 		return active, nil
 	}
 
-	if err = l.producer.Publish(ctx, topic.LikeSwitched, strconv.FormatUint(targetID, 10), event.SwitchedEvent{
-		Target:   target,
-		TargetID: targetID,
-		Liked:    active,
-		Operator: userID,
+	if err = l.producer.Publish(ctx, topic.FavoriteSwitched, strconv.FormatUint(videoID, 10), favoriteevent.SwitchedEvent{
+		VideoID:   videoID,
+		UserID:    userID,
+		Favorited: active,
 	}); err != nil {
-		if _, rollbackErr := l.repo.Set(ctx, target, targetID, userID, !active); rollbackErr != nil {
-			return false, httpx.New(httpx.CodeInternal, fmt.Sprintf("点赞状态回滚失败: %v", rollbackErr))
+		if _, rollbackErr := l.repo.Set(ctx, videoID, userID, !active); rollbackErr != nil {
+			return false, httpx.New(httpx.CodeInternal, "收藏状态回滚失败")
 		}
 		return false, err
 	}
 	return active, nil
 }
 
-// ListMyLikedVideos 我的点赞列表：按点赞时间倒序双字段游标分页
-func (l *Logic) ListMyLikedVideos(ctx context.Context, userID uint64, lastCreatedAt int64, lastID uint64, limit uint64) (*ListRes, error) {
+// ListMyFavorites 我的收藏列表：按收藏时间倒序双字段游标分页
+func (l *Logic) ListMyFavorites(ctx context.Context, userID uint64, lastCreatedAt int64, lastID uint64, limit uint64) (*ListRes, error) {
 	limit = normalizeLimit(limit)
 	var cursor time.Time
 	if lastID > 0 {
 		cursor = time.UnixMilli(lastCreatedAt)
 	}
 
-	items, err := l.repo.ListVideosByUser(ctx, userID, cursor, lastID, int(limit)+1)
+	items, err := l.repo.ListByUser(ctx, userID, cursor, lastID, int(limit)+1)
 	if err != nil {
 		return nil, err
 	}
@@ -127,7 +113,7 @@ func (l *Logic) ListMyLikedVideos(ctx context.Context, userID uint64, lastCreate
 			CommentCount:  item.CommentCount,
 			LikeCount:     item.LikeCount,
 			FavoriteCount: item.FavoriteCount,
-			IsLiked:       true,
+			IsFavorited:   true,
 			CreatedAt:     item.CreatedAt,
 		})
 		videoIDs = append(videoIDs, item.ID)
@@ -137,7 +123,7 @@ func (l *Logic) ListMyLikedVideos(ctx context.Context, userID uint64, lastCreate
 		}
 	}
 
-	if err = l.fillFavorited(ctx, list, videoIDs, userID); err != nil {
+	if err = l.fillLiked(ctx, list, videoIDs, userID); err != nil {
 		return nil, err
 	}
 	if err = l.fillFollowed(ctx, list, authorIDs, userID); err != nil {
@@ -147,23 +133,23 @@ func (l *Logic) ListMyLikedVideos(ctx context.Context, userID uint64, lastCreate
 	result := &ListRes{List: list, HasMore: hasMore}
 	if len(items) > 0 {
 		last := items[len(items)-1]
-		result.LastCreatedAt = last.LikedAt.UnixMilli()
-		result.LastID = last.LikeID
+		result.LastCreatedAt = last.FavoritedAt.UnixMilli()
+		result.LastID = last.FavoriteID
 	}
 	return result, nil
 }
 
-// fillFavorited 批量补当前用户对这批视频的收藏状态
-func (l *Logic) fillFavorited(ctx context.Context, list []ItemRes, videoIDs []uint64, userID uint64) error {
+// fillLiked 批量补当前用户对这批视频的点赞状态
+func (l *Logic) fillLiked(ctx context.Context, list []ItemRes, videoIDs []uint64, userID uint64) error {
 	if len(videoIDs) == 0 {
 		return nil
 	}
-	favorited, err := l.favorites.FilterFavorited(ctx, userID, videoIDs)
+	liked, err := l.likes.FilterLiked(ctx, likeevent.TargetVideo, userID, videoIDs)
 	if err != nil {
 		return err
 	}
 	for i := range list {
-		list[i].IsFavorited = favorited[list[i].Id]
+		list[i].IsLiked = liked[list[i].Id]
 	}
 	return nil
 }
@@ -187,33 +173,30 @@ func (l *Logic) fillFollowed(ctx context.Context, list []ItemRes, authorIDs []ui
 	return nil
 }
 
-// HandleSwitched 订阅点赞切换事件，异步维护 user_like 表
+// HandleSwitched 订阅自己的事件，异步维护 user_favorite 表
 func (l *Logic) HandleSwitched(ctx context.Context, payload []byte) error {
-	var switched event.SwitchedEvent
+	var switched favoriteevent.SwitchedEvent
 	if err := json.Unmarshal(payload, &switched); err != nil {
 		return consumer.Permanent(err)
 	}
-	if switched.Operator == 0 || switched.TargetID == 0 {
-		return consumer.Permanent(errors.New("点赞事件里缺少用户或目标 ID"))
-	}
-	if switched.Target != event.TargetVideo && switched.Target != event.TargetComment {
-		return consumer.Permanent(errors.New("点赞事件里 target 取值非法"))
+	if switched.UserID == 0 || switched.VideoID == 0 {
+		return consumer.Permanent(errors.New("收藏事件里缺少用户或视频 ID"))
 	}
 
 	var err error
-	if switched.Liked {
-		err = l.repo.Create(ctx, switched.Operator, switched.Target, switched.TargetID)
+	if switched.Favorited {
+		err = l.repo.Create(ctx, switched.UserID, switched.VideoID)
 	} else {
-		err = l.repo.Delete(ctx, switched.Operator, switched.Target, switched.TargetID)
+		err = l.repo.Delete(ctx, switched.UserID, switched.VideoID)
 	}
 	if err != nil {
-		slog.Error("维护点赞关系失败", "target", switched.Target, "target_id", switched.TargetID, "error", err)
+		slog.Error("维护收藏关系失败", "video_id", switched.VideoID, "error", err)
 		return err
 	}
 	return nil
 }
 
-// HandleVideoDeleted 视频被删除后清理它的全部点赞
+// HandleVideoDeleted 视频被删除后清理它的全部收藏
 func (l *Logic) HandleVideoDeleted(ctx context.Context, payload []byte) error {
 	var deleted videoevent.DeletedEvent
 	if err := json.Unmarshal(payload, &deleted); err != nil {
@@ -222,12 +205,12 @@ func (l *Logic) HandleVideoDeleted(ctx context.Context, payload []byte) error {
 	if deleted.VideoID == 0 {
 		return consumer.Permanent(errors.New("删除视频事件里没有 videoId"))
 	}
-	if err := l.repo.DeleteByTarget(ctx, event.TargetVideo, deleted.VideoID); err != nil {
-		slog.Error("清理视频点赞失败", "video_id", deleted.VideoID, "error", err)
+	if err := l.repo.DeleteByVideo(ctx, deleted.VideoID); err != nil {
+		slog.Error("清理视频收藏失败", "video_id", deleted.VideoID, "error", err)
 		return err
 	}
-	if err := l.repo.DeleteTargetSet(ctx, event.TargetVideo, deleted.VideoID); err != nil {
-		slog.Error("清理视频点赞集合失败", "video_id", deleted.VideoID, "error", err)
+	if err := l.repo.DeleteTargetSet(ctx, deleted.VideoID); err != nil {
+		slog.Error("清理视频收藏集合失败", "video_id", deleted.VideoID, "error", err)
 		return err
 	}
 	return nil

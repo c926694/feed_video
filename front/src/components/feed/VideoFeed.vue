@@ -7,6 +7,7 @@
       :active="idx === activeIndex"
       :framed="true"
       @toggle-like="toggleLike(video.id)"
+      @toggle-favorite="toggleFavorite(video.id)"
       @toggle-follow="toggleFollow(video.author.id)"
       @open-comment="openComment(video.id)"
       @share="shareVideo(video)"
@@ -35,7 +36,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
-import { fetchFeedVideos, fetchFollowVideos, fetchHotVideos, setFollow, setVideoLike } from "@/api";
+import { fetchFeedVideos, fetchFollowVideos, fetchHotVideos, setFollow, setVideoFavorite, setVideoLike } from "@/api";
 import CommentDrawer from "@/components/feed/CommentDrawer.vue";
 import VideoCard from "@/components/feed/VideoCard.vue";
 import type { Video } from "@/types/domain";
@@ -258,6 +259,29 @@ async function toggleLike(videoId: number) {
         ...item,
         liked,
         likeCount: Math.max(0, item.likeCount + delta)
+      };
+    });
+  recommendVideos.value = patch(recommendVideos.value);
+  followVideos.value = patch(followVideos.value);
+  hotVideos.value = patch(hotVideos.value);
+}
+
+async function toggleFavorite(videoId: number) {
+  const current =
+    recommendVideos.value.find((item) => item.id === videoId) ??
+    followVideos.value.find((item) => item.id === videoId) ??
+    hotVideos.value.find((item) => item.id === videoId);
+  if (!current) return;
+  const targetFavorited = await setVideoFavorite(videoId, !current.favorited);
+  const patch = (videos: Video[]) =>
+    videos.map((item) => {
+      if (item.id !== videoId) return item;
+      const favorited = targetFavorited;
+      const delta = (favorited ? 1 : 0) - (item.favorited ? 1 : 0);
+      return {
+        ...item,
+        favorited,
+        favoriteCount: Math.max(0, item.favoriteCount + delta)
       };
     });
   recommendVideos.value = patch(recommendVideos.value);

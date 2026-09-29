@@ -1,6 +1,6 @@
 import { http } from "@/utils/http";
-import { normalizeVideo, unwrapData } from "@/utils/normalize";
-import type { ApiEnvelope, RawVideo } from "@/types/backend";
+import { normalizeVideo, pickVideoList, unwrapData } from "@/utils/normalize";
+import type { ApiEnvelope } from "@/types/backend";
 import type { Video } from "@/types/domain";
 
 interface FeedParams {
@@ -25,15 +25,6 @@ export interface UploadCredential {
   bucket: string;
   coverKey: string;
   playKey: string;
-}
-
-function pickVideoList(source: unknown): RawVideo[] {
-  if (Array.isArray(source)) return source as RawVideo[];
-  if (!source || typeof source !== "object") return [];
-  const payload = source as Record<string, unknown>;
-  const candidates = [payload.list, payload.items, payload.videos, payload.video_list, payload.feed_video_list];
-  const found = candidates.find((entry) => Array.isArray(entry));
-  return (found as RawVideo[] | undefined) ?? [];
 }
 
 function credentialOf(body: unknown): UploadCredential {

@@ -8,6 +8,8 @@ import (
 	"time"
 
 	commentevent "simple_tiktok/internal/modules/comment/event"
+	favoriteevent "simple_tiktok/internal/modules/favorite/event"
+	favoriterepo "simple_tiktok/internal/modules/favorite/repo"
 	feedrepo "simple_tiktok/internal/modules/feed/repo"
 	followrepo "simple_tiktok/internal/modules/follow/repo"
 	likeevent "simple_tiktok/internal/modules/like/event"
@@ -22,18 +24,20 @@ import (
 const (
 	likeHotDelta       = 2
 	commentHotDelta    = 1
+	favoriteHotDelta   = 3
 	defaultHotInterval = 60
 	maxHotInterval     = 1440
 )
 
 // Logic Feed 模块的业务逻辑，负责索引与热度，视频与用户数据都通过别人的 repo 取
 type Logic struct {
-	feed     *feedrepo.Repo
-	videos   *videorepo.Repo
-	users    *userrepo.Repo
-	likes    *likerepo.Repo
-	follows  *followrepo.Repo
-	uploader *upload.Uploader
+	feed      *feedrepo.Repo
+	videos    *videorepo.Repo
+	users     *userrepo.Repo
+	likes     *likerepo.Repo
+	favorites *favoriterepo.Repo
+	follows   *followrepo.Repo
+	uploader  *upload.Uploader
 }
 
 // GetFeedVideos 按发布时间倒序取一页，双字段游标分页，第一页 lastId 传 0
@@ -179,6 +183,22 @@ func (l *Logic) HandleCommentCreated(ctx context.Context, payload []byte) error 
 	return l.feed.IncreaseHotScore(ctx, created.VideoID, commentHotDelta, time.Now())
 }
 
+// HandleFavoriteSwitched 收藏加热度，取消收藏对称回减
+func (l *Logic) HandleFavoriteSwitched(ctx context.Context, payload []byte) error {
+	var switched favoriteevent.SwitchedEvent
+	if err := json.Unmarshal(payload, &switched); err != nil {
+		return consumer.Permanent(err)
+	}
+	if switched.VideoID == 0 {
+		return consumer.Permanent(errors.New("收藏事件里没有 videoId"))
+	}
+	delta := float64(favoriteHotDelta)
+	if !switched.Favorited {
+		delta = -delta
+	}
+	return l.feed.IncreaseHotScore(ctx, switched.VideoID, delta, time.Now())
+}
+
 func (l *Logic) assemble(ctx context.Context, items []videorepo.Video, userID uint64) ([]VideoItem, error) {
 	list := make([]VideoItem, len(items))
 	authorIDs := make([]uint64, 0, len(items))
@@ -186,17 +206,18 @@ func (l *Logic) assemble(ctx context.Context, items []videorepo.Video, userID ui
 	seen := make(map[uint64]bool, len(items))
 	for i, item := range items {
 		list[i] = VideoItem{
-			Id:           item.ID,
-			AuthorID:     item.AuthorID,
-			AuthorName:   item.AuthorName,
-			AuthorAvatar: l.uploader.URL(item.AuthorAvatar),
-			Title:        item.Title,
-			Description:  item.Description,
-			CoverURL:     l.uploader.URL(item.CoverURL),
-			PlayURL:      l.uploader.URL(item.PlayURL),
-			LikeCount:    item.LikeCount,
-			CommentCount: item.CommentCount,
-			CreatedAt:    item.CreateTime,
+			Id:            item.ID,
+			AuthorID:      item.AuthorID,
+			AuthorName:    item.AuthorName,
+			AuthorAvatar:  l.uploader.URL(item.AuthorAvatar),
+			Title:         item.Title,
+			Description:   item.Description,
+			CoverURL:      l.uploader.URL(item.CoverURL),
+			PlayURL:       l.uploader.URL(item.PlayURL),
+			LikeCount:     item.LikeCount,
+			CommentCount:  item.CommentCount,
+			FavoriteCount: item.FavoriteCount,
+			CreatedAt:     item.CreateTime,
 		}
 		videoIDs[i] = item.ID
 		if item.AuthorID != 0 && !seen[item.AuthorID] {
@@ -212,6 +233,16 @@ func (l *Logic) assemble(ctx context.Context, items []videorepo.Video, userID ui
 		}
 		for i := range list {
 			list[i].IsLiked = liked[list[i].Id]
+		}
+	}
+
+	if len(videoIDs) > 0 {
+		favorited, err := l.favorites.FilterFavorited(ctx, userID, videoIDs)
+		if err != nil {
+			return nil, err
+		}
+		for i := range list {
+			list[i].IsFavorited = favorited[list[i].Id]
 		}
 	}
 

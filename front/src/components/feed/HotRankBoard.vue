@@ -48,6 +48,10 @@
               <span>❤️</span>
               <small>{{ video.likeCount }}</small>
             </button>
+            <button class="like-pill" :class="{ active: video.favorited }" @click="toggleFavorite(video.id)">
+              <span>⭐</span>
+              <small>{{ video.favoriteCount }}</small>
+            </button>
           </div>
 
           <p class="summary">{{ video.description || "这个视频暂时还没有描述。" }}</p>
@@ -68,7 +72,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { fetchHotVideos, setVideoLike } from "@/api";
+import { fetchHotVideos, setVideoFavorite, setVideoLike } from "@/api";
 import CommentDrawer from "@/components/feed/CommentDrawer.vue";
 import { useToast } from "@/composables/useToast";
 import type { Video } from "@/types/domain";
@@ -145,6 +149,21 @@ async function toggleLike(videoId: number) {
       ...item,
       liked: targetLiked,
       likeCount: Math.max(0, item.likeCount + delta)
+    };
+  });
+}
+
+async function toggleFavorite(videoId: number) {
+  const current = videos.value.find((item) => item.id === videoId);
+  if (!current) return;
+  const targetFavorited = await setVideoFavorite(videoId, !current.favorited);
+  videos.value = videos.value.map((item) => {
+    if (item.id !== videoId) return item;
+    const delta = (targetFavorited ? 1 : 0) - (item.favorited ? 1 : 0);
+    return {
+      ...item,
+      favorited: targetFavorited,
+      favoriteCount: Math.max(0, item.favoriteCount + delta)
     };
   });
 }

@@ -14,6 +14,8 @@ import (
 
 	"gorm.io/gorm"
 
+	favoriteevent "simple_tiktok/internal/modules/favorite/event"
+	favoriterepo "simple_tiktok/internal/modules/favorite/repo"
 	followrepo "simple_tiktok/internal/modules/follow/repo"
 	likeevent "simple_tiktok/internal/modules/like/event"
 	likerepo "simple_tiktok/internal/modules/like/repo"
@@ -42,13 +44,14 @@ const (
 
 // Logic 视频模块的业务逻辑
 type Logic struct {
-	videos   *videorepo.Repo
-	users    *userrepo.Repo
-	likes    *likerepo.Repo
-	follows  *followrepo.Repo
-	producer *producer.Producer
-	uploader *upload.Uploader
-	sts      *sts.Service
+	videos    *videorepo.Repo
+	users     *userrepo.Repo
+	likes     *likerepo.Repo
+	favorites *favoriterepo.Repo
+	follows   *followrepo.Repo
+	producer  *producer.Producer
+	uploader  *upload.Uploader
+	sts       *sts.Service
 }
 
 // CreateVideo 创建发布记录，状态为已创建，不发事件。文件由前端直传 OSS。
@@ -298,6 +301,9 @@ func (l *Logic) GetMyVideos(ctx context.Context, userID uint64, limit uint64) ([
 	if err = l.fillLiked(ctx, list, userID); err != nil {
 		return nil, err
 	}
+	if err = l.fillFavorited(ctx, list, userID); err != nil {
+		return nil, err
+	}
 	if err = l.fillFollowed(ctx, list, userID); err != nil {
 		return nil, err
 	}
@@ -318,6 +324,9 @@ func (l *Logic) GetVideoInfo(ctx context.Context, videoID uint64, userID uint64)
 
 	list := []InfoRes{info}
 	if err = l.fillLiked(ctx, list, userID); err != nil {
+		return InfoRes{}, err
+	}
+	if err = l.fillFavorited(ctx, list, userID); err != nil {
 		return InfoRes{}, err
 	}
 	if err = l.fillFollowed(ctx, list, userID); err != nil {
@@ -367,6 +376,25 @@ func (l *Logic) DeleteVideo(ctx context.Context, videoID uint64, userID uint64) 
 	})
 }
 
+// fillFavorited 批量补当前用户对这批视频的收藏状态
+func (l *Logic) fillFavorited(ctx context.Context, list []InfoRes, userID uint64) error {
+	if len(list) == 0 {
+		return nil
+	}
+	videoIDs := make([]uint64, len(list))
+	for i, item := range list {
+		videoIDs[i] = item.Id
+	}
+	favorited, err := l.favorites.FilterFavorited(ctx, userID, videoIDs)
+	if err != nil {
+		return err
+	}
+	for i := range list {
+		list[i].IsFavorited = favorited[list[i].Id]
+	}
+	return nil
+}
+
 // HandleLikeSwitched 订阅点赞事件，只处理视频点赞
 func (l *Logic) HandleLikeSwitched(ctx context.Context, payload []byte) error {
 	var switched likeevent.SwitchedEvent
@@ -393,6 +421,29 @@ func (l *Logic) HandleLikeSwitched(ctx context.Context, payload []byte) error {
 	return l.videos.DeleteInfoCache(ctx, switched.TargetID)
 }
 
+// HandleFavoriteSwitched 订阅收藏事件，按集合大小对账视频收藏数
+func (l *Logic) HandleFavoriteSwitched(ctx context.Context, payload []byte) error {
+	var switched favoriteevent.SwitchedEvent
+	if err := json.Unmarshal(payload, &switched); err != nil {
+		return consumer.Permanent(err)
+	}
+	if switched.VideoID == 0 {
+		return consumer.Permanent(errors.New("收藏事件里没有 videoId"))
+	}
+
+	count, err := l.favorites.CountFavorites(ctx, switched.VideoID)
+	if err != nil {
+		slog.Error("统计视频收藏数失败", "video_id", switched.VideoID, "error", err)
+		return err
+	}
+	if err = l.videos.SyncFavoriteCount(ctx, switched.VideoID, count); err != nil {
+		slog.Error("对账视频收藏数失败", "video_id", switched.VideoID, "error", err)
+		return err
+	}
+	// 收藏数变了，让详情缓存失效，下一次读重新回源
+	return l.videos.DeleteInfoCache(ctx, switched.VideoID)
+}
+
 func (l *Logic) toInfoRes(item videorepo.Video) InfoRes {
 	return InfoRes{
 		Id:           item.ID,
@@ -403,10 +454,11 @@ func (l *Logic) toInfoRes(item videorepo.Video) InfoRes {
 		Description:  item.Description,
 		CoverURL:     l.uploader.URL(item.CoverURL),
 		PlayURL:      l.uploader.URL(item.PlayURL),
-		CommentCount: item.CommentCount,
-		LikeCount:    item.LikeCount,
-		Status:       item.Status,
-		CreatedAt:    item.CreateTime,
+		CommentCount:  item.CommentCount,
+		LikeCount:     item.LikeCount,
+		FavoriteCount: item.FavoriteCount,
+		Status:        item.Status,
+		CreatedAt:     item.CreateTime,
 	}
 }
 
@@ -523,35 +575,37 @@ func (l *Logic) loadInfoFromDBAndWriteCache(ctx context.Context, videoID uint64)
 
 func (l *Logic) fromCacheEntry(entry videorepo.InfoCacheEntry) InfoRes {
 	return InfoRes{
-		Id:           entry.ID,
-		AuthorID:     entry.AuthorID,
-		AuthorName:   entry.AuthorName,
-		AuthorAvatar: entry.AuthorAvatar,
-		Title:        entry.Title,
-		Description:  entry.Description,
-		CoverURL:     entry.CoverURL,
-		PlayURL:      entry.PlayURL,
-		CommentCount: entry.CommentCount,
-		LikeCount:    entry.LikeCount,
-		Status:       entry.Status,
-		CreatedAt:    entry.CreatedAt,
+		Id:            entry.ID,
+		AuthorID:      entry.AuthorID,
+		AuthorName:    entry.AuthorName,
+		AuthorAvatar:  entry.AuthorAvatar,
+		Title:         entry.Title,
+		Description:   entry.Description,
+		CoverURL:      entry.CoverURL,
+		PlayURL:       entry.PlayURL,
+		CommentCount:  entry.CommentCount,
+		LikeCount:     entry.LikeCount,
+		FavoriteCount: entry.FavoriteCount,
+		Status:        entry.Status,
+		CreatedAt:     entry.CreatedAt,
 	}
 }
 
 func toCacheEntry(info InfoRes) videorepo.InfoCacheEntry {
 	return videorepo.InfoCacheEntry{
-		ID:           info.Id,
-		AuthorID:     info.AuthorID,
-		AuthorName:   info.AuthorName,
-		AuthorAvatar: info.AuthorAvatar,
-		Title:        info.Title,
-		Description:  info.Description,
-		CoverURL:     info.CoverURL,
-		PlayURL:      info.PlayURL,
-		LikeCount:    info.LikeCount,
-		CommentCount: info.CommentCount,
-		Status:       info.Status,
-		CreatedAt:    info.CreatedAt,
+		ID:            info.Id,
+		AuthorID:      info.AuthorID,
+		AuthorName:    info.AuthorName,
+		AuthorAvatar:  info.AuthorAvatar,
+		Title:         info.Title,
+		Description:   info.Description,
+		CoverURL:      info.CoverURL,
+		PlayURL:       info.PlayURL,
+		LikeCount:     info.LikeCount,
+		CommentCount:  info.CommentCount,
+		FavoriteCount: info.FavoriteCount,
+		Status:        info.Status,
+		CreatedAt:     info.CreatedAt,
 	}
 }
 

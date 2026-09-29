@@ -1,13 +1,8 @@
 <template>
   <section class="grid-wrap">
-    <h3>我的视频</h3>
     <div v-if="videos.length" class="grid">
       <div v-for="video in videos" :key="video.id" class="cell">
-        <RouterLink
-          v-if="video.status === 'published'"
-          class="item"
-          :to="{ path: '/profile/videos', query: { videoId: video.id } }"
-        >
+        <RouterLink v-if="!isPending(video)" class="item" :to="videoLink(video)">
           <img v-if="video.coverUrl" :src="video.coverUrl" :alt="video.title" />
           <div v-else class="fallback">暂无封面</div>
           <footer>
@@ -29,7 +24,7 @@
         </div>
       </div>
     </div>
-    <p v-else class="empty">还没有可展示的视频，先去发布一个吧。</p>
+    <p v-else class="empty">{{ emptyText }}</p>
   </section>
 </template>
 
@@ -38,15 +33,35 @@ import { deleteVideo } from "@/api";
 import { removeTask, retryTask, useUploadQueue } from "@/composables/useUploadQueue";
 import type { Video } from "@/types/domain";
 
-defineProps<{
-  videos: Video[];
-}>();
+const props = withDefaults(
+  defineProps<{
+    videos: Video[];
+    emptyText?: string;
+    // manage 为 true 时未发布完成的视频显示上传进度与重试、删除操作
+    manage?: boolean;
+    // source 决定点开视频后播放页加载哪个列表
+    source?: string;
+  }>(),
+  {
+    emptyText: "还没有可展示的视频，先去发布一个吧。",
+    manage: true,
+    source: "works"
+  }
+);
 
 const emit = defineEmits<{
   (event: "changed"): void;
 }>();
 
 const { tasks } = useUploadQueue();
+
+function isPending(video: Video) {
+  return props.manage && video.status !== "published";
+}
+
+function videoLink(video: Video) {
+  return { path: "/profile/videos", query: { videoId: video.id, source: props.source } };
+}
 
 function taskOf(videoId: number) {
   return tasks.value.find((item) => item.videoId === videoId);
@@ -80,13 +95,7 @@ async function onRetry(videoId: number) {
 
 <style scoped>
 .grid-wrap {
-  padding: 8px 14px 120px;
-  max-width: 760px;
-  margin: 0 auto;
-}
-
-h3 {
-  margin: 0 0 10px;
+  min-height: 120px;
 }
 
 .grid {
@@ -187,11 +196,8 @@ small {
 
 .empty {
   color: var(--text-muted);
-}
-
-@media (max-width: 520px) {
-  .grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
+  margin: 0;
+  padding: 18px 2px;
+  font-size: 13px;
 }
 </style>

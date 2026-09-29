@@ -25,6 +25,7 @@
       :show-follow="showFollow"
       :show-delete="showDelete"
       @toggle-like="$emit('toggle-like')"
+      @toggle-favorite="$emit('toggle-favorite')"
       @comment="$emit('open-comment')"
       @toggle-follow="$emit('toggle-follow')"
       @share="$emit('share')"
@@ -82,6 +83,7 @@ const props = withDefaults(
 
 defineEmits<{
   (e: "toggle-like"): void;
+  (e: "toggle-favorite"): void;
   (e: "toggle-follow"): void;
   (e: "open-comment"): void;
   (e: "share"): void;

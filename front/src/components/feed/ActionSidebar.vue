@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <aside class="sidebar">
     <button v-if="showFollow" class="avatar-btn" @click="$emit('toggle-follow')">
       <img v-if="video.author.avatar" :src="video.author.avatar" alt="avatar" />
@@ -20,6 +20,22 @@
         </svg>
       </span>
       <small>{{ video.likeCount }}</small>
+    </button>
+
+    <button class="action-btn fav" :class="{ active: video.favorited }" @click="$emit('toggle-favorite')">
+      <span class="icon-wrap" aria-hidden="true">
+        <svg viewBox="0 0 24 24" class="icon-svg">
+          <path
+            d="m12 3 2.7 5.7 6.3.8-4.6 4.3 1.2 6.2L12 17l-5.6 3 1.2-6.2L3 9.5l6.3-.8Z"
+            class="star-fill"
+          />
+          <path
+            d="m12 3 2.7 5.7 6.3.8-4.6 4.3 1.2 6.2L12 17l-5.6 3 1.2-6.2L3 9.5l6.3-.8Z"
+            class="star-stroke"
+          />
+        </svg>
+      </span>
+      <small>{{ video.favoriteCount }}</small>
     </button>
 
     <button class="action-btn" @click="$emit('comment')">
@@ -74,6 +90,7 @@ withDefaults(
 
 defineEmits<{
   (e: "toggle-like"): void;
+  (e: "toggle-favorite"): void;
   (e: "comment"): void;
   (e: "toggle-follow"): void;
   (e: "share"): void;
@@ -181,6 +198,24 @@ button {
 }
 
 .action-btn.like.active .heart-fill {
+  opacity: 1;
+}
+
+.star-fill {
+  fill: currentColor;
+  opacity: 0;
+  stroke: none;
+}
+
+.star-stroke {
+  fill: none;
+}
+
+.action-btn.fav.active {
+  color: #ffc23d;
+}
+
+.action-btn.fav.active .star-fill {
   opacity: 1;
 }
 

@@ -1,9 +1,15 @@
-package feed
+package favorite
 
 import "time"
 
-// VideoItem Feed 里的一条视频
-type VideoItem struct {
+// FavoriteRes 收藏状态响应
+type FavoriteRes struct {
+	VideoId     uint64 `json:"video_id"`
+	IsFavorited bool   `json:"is_favorited"`
+}
+
+// ItemRes 收藏列表里的一条视频，字段与 Feed 条目一致
+type ItemRes struct {
 	Id            uint64    `json:"id"`
 	AuthorID      uint64    `json:"author_id"`
 	AuthorName    string    `json:"author_name"`
@@ -21,17 +27,10 @@ type VideoItem struct {
 	CreatedAt     time.Time `json:"created_at"`
 }
 
-// FeedRes 普通 Feed 响应
-type FeedRes struct {
-	FeedVideoList []VideoItem `json:"feed_video_list"`
-	LastCreatedAt int64       `json:"last_created_at"`
-	LastId        uint64      `json:"last_id"`
-}
-
-// HotFeedRes 热榜响应
-type HotFeedRes struct {
-	FeedVideoList []VideoItem `json:"feed_video_list"`
-	NextOffset    uint64      `json:"next_offset"`
-	HasMore       bool        `json:"has_more"`
-	Interval      int         `json:"interval"`
+// ListRes 收藏列表分页响应
+type ListRes struct {
+	List          []ItemRes `json:"list"`
+	LastCreatedAt int64     `json:"last_created_at"`
+	LastID        uint64    `json:"last_id"`
+	HasMore       bool      `json:"has_more"`
 }

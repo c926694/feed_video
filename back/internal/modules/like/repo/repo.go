@@ -149,3 +149,39 @@ func (r *Repo) DeleteTargetSets(ctx context.Context, target string, targetIDs []
 func (r *Repo) CountLikes(ctx context.Context, target string, targetID uint64) (int64, error) {
 	return r.redisClient.SCard(ctx, keyFor(target, targetID)).Result()
 }
+
+// ListVideosByUser 我的点赞列表：按点赞时间倒序双字段游标分页，联视频表取展示字段
+func (r *Repo) ListVideosByUser(ctx context.Context, userID uint64, lastCreatedAt time.Time, lastID uint64, limit int) ([]Video, error) {
+	items := make([]Video, 0, limit)
+	query := r.db.WithContext(ctx).
+		Table("user_like AS ul").
+		Select("v.id, v.author_id, v.author_name, v.author_avatar, v.title, v.description, v.cover_url, v.play_url, v.like_count, v.comment_count, v.favorite_count, v.status, v.created_at, ul.created_at AS liked_at, ul.id AS like_id").
+		Joins("JOIN video AS v ON v.id = ul.target_id").
+		Where("ul.user_id = ? AND ul.target_type = ? AND v.status = ?", userID, "video", "published")
+	if lastID > 0 {
+		query = query.Where("ul.created_at <= ? AND ul.id < ?", lastCreatedAt, lastID)
+	}
+	if err := query.Order("ul.created_at desc, ul.id desc").Limit(limit).Scan(&items).Error; err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+// Video 点赞列表联表查询出的视频行
+type Video struct {
+	ID            uint64    `gorm:"column:id"`
+	AuthorID      uint64    `gorm:"column:author_id"`
+	AuthorName    string    `gorm:"column:author_name"`
+	AuthorAvatar  string    `gorm:"column:author_avatar"`
+	Title         string    `gorm:"column:title"`
+	Description   string    `gorm:"column:description"`
+	CoverURL      string    `gorm:"column:cover_url"`
+	PlayURL       string    `gorm:"column:play_url"`
+	LikeCount     int64     `gorm:"column:like_count"`
+	CommentCount  int64     `gorm:"column:comment_count"`
+	FavoriteCount int64     `gorm:"column:favorite_count"`
+	Status        string    `gorm:"column:status"`
+	CreatedAt     time.Time `gorm:"column:created_at"`
+	LikedAt       time.Time `gorm:"column:liked_at"`
+	LikeID        uint64    `gorm:"column:like_id"`
+}

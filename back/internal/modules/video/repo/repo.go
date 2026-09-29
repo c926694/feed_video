@@ -27,36 +27,38 @@ const (
 
 // Video video 表
 type Video struct {
-	ID           uint64    `gorm:"primaryKey"`
-	AuthorID     uint64    `gorm:"index;not null;"`
-	AuthorName   string    `gorm:"size:255;not null;"`
-	AuthorAvatar string    `gorm:"size:255"`
-	PlayURL      string    `gorm:"size:255;not null"`
-	CoverURL     string    `gorm:"size:255;not null"`
-	Title        string    `gorm:"size:255;not null"`
-	Description  string    `gorm:"type:text"`
-	LikeCount    int64     `gorm:"default:0"`
-	CommentCount int64     `gorm:"default:0"`
-	Status       string    `gorm:"column:status;size:16;not null;default:published"`
-	RequestID    string    `gorm:"column:request_id;size:64"`
-	CreateTime   time.Time `gorm:"column:created_at;default:CURRENT_TIMESTAMP(3)" json:"created_at"`
-	UpdateTime   time.Time `gorm:"column:updated_at;default:CURRENT_TIMESTAMP(3)" json:"updated_at"`
+	ID            uint64    `gorm:"primaryKey"`
+	AuthorID      uint64    `gorm:"index;not null;"`
+	AuthorName    string    `gorm:"size:255;not null;"`
+	AuthorAvatar  string    `gorm:"size:255"`
+	PlayURL       string    `gorm:"size:255;not null"`
+	CoverURL      string    `gorm:"size:255;not null"`
+	Title         string    `gorm:"size:255;not null"`
+	Description   string    `gorm:"type:text"`
+	LikeCount     int64     `gorm:"default:0"`
+	CommentCount  int64     `gorm:"default:0"`
+	FavoriteCount int64     `gorm:"default:0"`
+	Status        string    `gorm:"column:status;size:16;not null;default:published"`
+	RequestID     string    `gorm:"column:request_id;size:64"`
+	CreateTime    time.Time `gorm:"column:created_at;default:CURRENT_TIMESTAMP(3)" json:"created_at"`
+	UpdateTime    time.Time `gorm:"column:updated_at;default:CURRENT_TIMESTAMP(3)" json:"updated_at"`
 }
 
 // InfoCacheEntry 视频详情缓存里的一条记录
 type InfoCacheEntry struct {
-	ID           uint64    `json:"id"`
-	AuthorID     uint64    `json:"author_id"`
-	AuthorName   string    `json:"author_name"`
-	AuthorAvatar string    `json:"author_avatar"`
-	Title        string    `json:"title"`
-	Description  string    `json:"description"`
-	CoverURL     string    `json:"cover_url"`
-	PlayURL      string    `json:"play_url"`
-	LikeCount    int64     `json:"like_count"`
-	CommentCount int64     `json:"comment_count"`
-	Status       string    `json:"status"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID            uint64    `json:"id"`
+	AuthorID      uint64    `json:"author_id"`
+	AuthorName    string    `json:"author_name"`
+	AuthorAvatar  string    `json:"author_avatar"`
+	Title         string    `json:"title"`
+	Description   string    `json:"description"`
+	CoverURL      string    `json:"cover_url"`
+	PlayURL       string    `json:"play_url"`
+	LikeCount     int64     `json:"like_count"`
+	CommentCount  int64     `json:"comment_count"`
+	FavoriteCount int64     `json:"favorite_count"`
+	Status        string    `json:"status"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 // InfoCache 带逻辑过期时间的详情缓存记录
@@ -179,6 +181,12 @@ func (r *Repo) MarkStatus(ctx context.Context, videoID uint64, authorID uint64, 
 func (r *Repo) SyncLikeCount(ctx context.Context, videoID uint64, count int64) error {
 	return r.db.WithContext(ctx).Model(&Video{}).Where("id = ?", videoID).
 		Update("like_count", count).Error
+}
+
+// SyncFavoriteCount 按实际收藏数对账视频收藏数
+func (r *Repo) SyncFavoriteCount(ctx context.Context, videoID uint64, count int64) error {
+	return r.db.WithContext(ctx).Model(&Video{}).Where("id = ?", videoID).
+		Update("favorite_count", count).Error
 }
 
 // UpdateAuthorInfo 刷新某个作者全部视频上冗余的展示字段

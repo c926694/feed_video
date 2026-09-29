@@ -8,17 +8,18 @@
         :key="`${video.id}-${idx}`"
         :video="video"
         :active="idx === activeIndex"
-        :show-follow="false"
-        :show-delete="true"
+        :show-follow="source !== 'works'"
+        :show-delete="source === 'works'"
         @toggle-like="toggleLike(video.id)"
-        @toggle-follow="noopFollow"
+        @toggle-favorite="toggleFavorite(video.id)"
+        @toggle-follow="toggleFollow(video.id)"
         @open-comment="openComment(video.id)"
         @share="shareVideo(video)"
         @delete-video="onDeleteVideo(video.id)"
       />
 
       <div v-if="loading" class="loading">加载中...</div>
-      <div v-else-if="!videos.length" class="loading">暂无视频</div>
+      <div v-else-if="!videos.length" class="loading">{{ emptyText }}</div>
 
       <div v-if="videos.length > 1" class="switch-nav">
         <button class="switch-btn" :disabled="activeIndex <= 0" @click.stop="switchPrev" aria-label="上一条视频">↑</button>
@@ -35,13 +36,24 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onMounted, ref } from "vue";
+import { computed, nextTick, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { deleteVideo, fetchMyVideos, setVideoLike } from "@/api";
+import {
+  deleteVideo,
+  fetchAllVideoPages,
+  fetchMyFavorites,
+  fetchMyLikes,
+  fetchMyVideos,
+  setFollow,
+  setVideoFavorite,
+  setVideoLike
+} from "@/api";
 import CommentDrawer from "@/components/feed/CommentDrawer.vue";
 import VideoCard from "@/components/feed/VideoCard.vue";
 import { useToast } from "@/composables/useToast";
 import type { Video } from "@/types/domain";
+
+type Source = "works" | "favorites" | "likes";
 
 const router = useRouter();
 const route = useRoute();
@@ -56,11 +68,29 @@ const commentVideoId = ref(0);
 const deletingVideoId = ref(0);
 
 const targetVideoId = Number(route.query.videoId ?? 0);
+const source = parseSource(route.query.source);
+
+const emptyText = computed(() => {
+  if (source === "favorites") return "还没有收藏的视频";
+  if (source === "likes") return "还没有点赞的视频";
+  return "暂无视频";
+});
+
+function parseSource(raw: unknown): Source {
+  if (raw === "favorites" || raw === "likes") return raw;
+  return "works";
+}
+
+function loadVideos(): Promise<Video[]> {
+  if (source === "favorites") return fetchAllVideoPages(fetchMyFavorites);
+  if (source === "likes") return fetchAllVideoPages(fetchMyLikes);
+  return fetchMyVideos(120);
+}
 
 async function bootstrap() {
   loading.value = true;
   try {
-    videos.value = await fetchMyVideos(120);
+    videos.value = await loadVideos();
     if (!videos.value.length) return;
 
     let idx = videos.value.findIndex((item) => item.id === targetVideoId);
@@ -75,11 +105,7 @@ async function bootstrap() {
 }
 
 function goBack() {
-  if (window.history.length > 1) {
-    router.back();
-    return;
-  }
-  router.push("/profile");
+  router.push({ path: "/profile", query: { tab: source } });
 }
 
 function onScroll() {
@@ -98,6 +124,11 @@ async function toggleLike(videoId: number) {
   const current = videos.value.find((item) => item.id === videoId);
   if (!current) return;
   const targetLiked = await setVideoLike(videoId, !current.liked);
+  // 点赞列表里取消点赞后这条不再属于该列表，直接移出
+  if (source === "likes" && !targetLiked) {
+    await removeFromList(videoId, "已取消点赞");
+    return;
+  }
   videos.value = videos.value.map((item) => {
     if (item.id !== videoId) return item;
     const delta = (targetLiked ? 1 : 0) - (item.liked ? 1 : 0);
@@ -105,6 +136,39 @@ async function toggleLike(videoId: number) {
       ...item,
       liked: targetLiked,
       likeCount: Math.max(0, item.likeCount + delta)
+    };
+  });
+}
+
+async function toggleFavorite(videoId: number) {
+  const current = videos.value.find((item) => item.id === videoId);
+  if (!current) return;
+  const targetFavorited = await setVideoFavorite(videoId, !current.favorited);
+  // 收藏列表里取消收藏后这条不再属于该列表，直接移出
+  if (source === "favorites" && !targetFavorited) {
+    await removeFromList(videoId, "已取消收藏");
+    return;
+  }
+  videos.value = videos.value.map((item) => {
+    if (item.id !== videoId) return item;
+    const delta = (targetFavorited ? 1 : 0) - (item.favorited ? 1 : 0);
+    return {
+      ...item,
+      favorited: targetFavorited,
+      favoriteCount: Math.max(0, item.favoriteCount + delta)
+    };
+  });
+}
+
+async function toggleFollow(videoId: number) {
+  const current = videos.value.find((item) => item.id === videoId);
+  if (!current) return;
+  const targetFollowed = await setFollow(current.author.id, !current.followed);
+  videos.value = videos.value.map((item) => {
+    if (item.id !== videoId) return item;
+    return {
+      ...item,
+      followed: targetFollowed
     };
   });
 }
@@ -117,27 +181,31 @@ async function onDeleteVideo(videoId: number) {
   deletingVideoId.value = videoId;
   try {
     await deleteVideo(videoId);
-
-    const deletedIndex = videos.value.findIndex((item) => item.id === videoId);
-    videos.value = videos.value.filter((item) => item.id !== videoId);
-
-    if (!videos.value.length) {
-      showToast("视频已删除");
-      router.push("/profile");
-      return;
-    }
-
-    const fallbackIndex = deletedIndex >= 0 ? deletedIndex : activeIndex.value;
-    activeIndex.value = Math.max(0, Math.min(fallbackIndex, videos.value.length - 1));
-
-    await nextTick();
-    scrollToActive();
-    showToast("视频已删除");
+    await removeFromList(videoId, "视频已删除");
   } catch {
     // 错误提示已由 http 拦截器统一弹出
   } finally {
     deletingVideoId.value = 0;
   }
+}
+
+// removeFromList 把一条视频移出当前列表，并让相邻的一条顶上来
+async function removeFromList(videoId: number, toastText: string) {
+  const removedIndex = videos.value.findIndex((item) => item.id === videoId);
+  videos.value = videos.value.filter((item) => item.id !== videoId);
+
+  if (!videos.value.length) {
+    showToast(toastText);
+    goBack();
+    return;
+  }
+
+  const fallbackIndex = removedIndex >= 0 ? removedIndex : activeIndex.value;
+  activeIndex.value = Math.max(0, Math.min(fallbackIndex, videos.value.length - 1));
+
+  await nextTick();
+  scrollToActive();
+  showToast(toastText);
 }
 
 function scrollToActive() {
@@ -161,10 +229,6 @@ function switchNext() {
 function shareVideo(video: Video) {
   navigator.clipboard.writeText(video.playUrl).catch(() => undefined);
   showToast("已复制视频链接");
-}
-
-function noopFollow() {
-  return;
 }
 
 onMounted(() => {

@@ -23,11 +23,21 @@ export interface Video {
   createdAt?: string;
   likeCount: number;
   commentCount: number;
+  favoriteCount: number;
   liked: boolean;
+  favorited: boolean;
   followed: boolean;
   status: string;
   author: User;
   score?: string;
+}
+
+// VideoPage 带游标的视频列表分页结果
+export interface VideoPage {
+  videos: Video[];
+  lastCreatedAt: number;
+  lastId: number;
+  hasMore: boolean;
 }
 
 export interface Comment {

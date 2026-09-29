@@ -16,6 +16,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"simple_tiktok/internal/modules/comment"
+	"simple_tiktok/internal/modules/favorite"
 	"simple_tiktok/internal/modules/feed"
 	"simple_tiktok/internal/modules/follow"
 	"simple_tiktok/internal/modules/like"
@@ -122,6 +123,7 @@ func main() {
 	httpRegistrations := []func(*gin.Engine, *svc.ServiceContext) (*gin.Engine, error){
 		user.RegisterHTTP,
 		like.RegisterHTTP,
+		favorite.RegisterHTTP,
 		follow.RegisterHTTP,
 		video.RegisterHTTP,
 		comment.RegisterHTTP,
@@ -146,6 +148,7 @@ func main() {
 		{comment.Name, comment.RegisterConsumers},
 		{feed.Name, feed.RegisterConsumers},
 		{like.Name, like.RegisterConsumers},
+		{favorite.Name, favorite.RegisterConsumers},
 	}
 	for _, item := range consumerRegistrations {
 		eventConsumer := consumer.New(cfg.Kafka.Brokers, cfg.Kafka.GroupID, item.subscriber, eventProducer)

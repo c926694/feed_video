@@ -72,3 +72,27 @@ func (h *Controller) UnlikeComment(c *gin.Context) {
 	}
 	httpx.OK(c, CommentLikeRes{CommentId: commentID, IsLiked: liked})
 }
+
+func (h *Controller) ListMine(c *gin.Context) {
+	lastCreatedAt, err := strconv.ParseInt(c.DefaultQuery("last_created_at", "0"), 10, 64)
+	if err != nil {
+		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "last_created_at 参数不合法"))
+		return
+	}
+	lastID, err := strconv.ParseUint(c.DefaultQuery("last_id", "0"), 10, 64)
+	if err != nil {
+		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "last_id 参数不合法"))
+		return
+	}
+	limit, err := strconv.ParseUint(c.DefaultQuery("limit", "0"), 10, 64)
+	if err != nil {
+		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "limit 参数不合法"))
+		return
+	}
+	list, err := h.Logic.ListMyLikedVideos(c.Request.Context(), auth.UserID(c), lastCreatedAt, lastID, limit)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	httpx.OK(c, list)
+}
