@@ -19,6 +19,8 @@ type VideoItem struct {
 	IsFavorited   bool      `json:"is_favorited"`
 	IsFollow      bool      `json:"is_follow"`
 	CreatedAt     time.Time `json:"created_at"`
+	// Score 只在热榜里有值，是窗口内计得的加权互动分
+	Score float64 `json:"score"`
 }
 
 // FeedRes 普通 Feed 响应

@@ -119,9 +119,10 @@ func (l *Logic) Create(ctx context.Context, userID uint64, createReq CreateReq) 
 	// 热度走 Kafka，投递失败只记日志；评论数已随事务即时更新。
 	// 评论数对视频展示不重要，缓存里的旧值由逻辑过期兜住，不主动失效
 	if err := l.producer.Publish(ctx, topic.CommentCreated, strconv.FormatUint(item.ID, 10), commentevent.CreatedEvent{
-		CommentID: item.ID,
-		VideoID:   item.VideoID,
-		Commenter: item.Commenter,
+		CommentID:  item.ID,
+		VideoID:    item.VideoID,
+		Commenter:  item.Commenter,
+		OccurredAt: time.Now().UnixMilli(),
 	}); err != nil {
 		slog.Error("发布评论创建事件失败", "comment_id", item.ID, "error", err)
 	}

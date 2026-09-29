@@ -44,7 +44,7 @@ func RegisterHTTP(r *gin.Engine, ctx *svc.ServiceContext) (*gin.Engine, error) {
 
 func RegisterConsumers(sub *consumer.Consumer, ctx *svc.ServiceContext) error {
 	moduleLogic := NewLogic(ctx)
-	sub.Subscribe(topic.VideoCreated, moduleLogic.HandleVideoCreated)
+	// 发布不进热度桶，新视频要等第一次互动才可能上榜，所以不订阅 video_created
 	sub.Subscribe(topic.VideoDeleted, moduleLogic.HandleVideoDeleted)
 	sub.Subscribe(topic.LikeSwitched, moduleLogic.HandleLikeSwitched)
 	sub.Subscribe(topic.FavoriteSwitched, moduleLogic.HandleFavoriteSwitched)

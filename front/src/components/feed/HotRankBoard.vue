@@ -76,6 +76,7 @@ import { fetchHotVideos, setVideoFavorite, setVideoLike } from "@/api";
 import CommentDrawer from "@/components/feed/CommentDrawer.vue";
 import { useToast } from "@/composables/useToast";
 import type { Video } from "@/types/domain";
+import { dedupeById } from "@/utils/collections";
 
 const { showToast } = useToast();
 
@@ -130,7 +131,7 @@ async function loadMore() {
       offset: nextOffset.value,
       limit: 5
     });
-    videos.value = videos.value.concat(result.videos);
+    videos.value = dedupeById(videos.value.concat(result.videos));
     nextOffset.value = result.nextOffset;
     hasMore.value = result.hasMore;
   } finally {

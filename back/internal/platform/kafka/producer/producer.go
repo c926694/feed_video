@@ -45,13 +45,19 @@ func (p *Producer) Publish(ctx context.Context, name string, key string, payload
 	return p.PublishRaw(ctx, name, key, data)
 }
 
-// PublishRaw 发送已经序列化好的消息，供转发失败消息这类场景使用
+// PublishRaw 发送已经序列化好的消息，供转发失败消息这类场景使用。
+// key 非空时按 key 哈希挑分区，同一个实体的事件因此进同一个分区、按写入顺序被消费；
+// key 为空表示这条消息不要求顺序，交给均衡器自己分散
 func (p *Producer) PublishRaw(ctx context.Context, name string, key string, value []byte) error {
 	writer := p.writerFor(name)
+	var msgKey []byte
+	if key != "" {
+		msgKey = []byte(key)
+	}
 	var lastErr error
 	for attempt := 0; attempt < retryTimes; attempt++ {
 		lastErr = writer.WriteMessages(ctx, kafka.Message{
-			Key:   []byte(key),
+			Key:   msgKey,
 			Value: value,
 			Time:  time.Now(),
 		})
@@ -88,7 +94,7 @@ func (p *Producer) writerFor(name string) *kafka.Writer {
 	writer := &kafka.Writer{
 		Addr:         kafka.TCP(p.brokers...),
 		Topic:        name,
-		Balancer:     &kafka.LeastBytes{},
+		Balancer:     &kafka.Hash{},
 		RequiredAcks: kafka.RequireOne,
 		Async:        false,
 		BatchTimeout: batchTimeout,

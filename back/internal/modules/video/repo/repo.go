@@ -98,12 +98,15 @@ func (r *Repo) GetByRequestID(ctx context.Context, authorID uint64, requestID st
 	return &item, nil
 }
 
+// FilterByIDs 按 ID 批量取已发布的视频，供热榜按有序集合给出的顺序回表
 func (r *Repo) FilterByIDs(ctx context.Context, videoIDs []uint64) ([]Video, error) {
 	if len(videoIDs) == 0 {
 		return []Video{}, nil
 	}
 	items := make([]Video, 0, len(videoIDs))
-	if err := r.db.WithContext(ctx).Where("id in ?", videoIDs).Find(&items).Error; err != nil {
+	if err := r.db.WithContext(ctx).
+		Where("id in ? and status = ?", videoIDs, StatusPublished).
+		Find(&items).Error; err != nil {
 		return nil, err
 	}
 	return items, nil

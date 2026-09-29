@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"sort"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 
 	commentevent "simple_tiktok/internal/modules/comment/event"
 	favoriteevent "simple_tiktok/internal/modules/favorite/event"
@@ -22,11 +25,22 @@ import (
 )
 
 const (
-	likeHotDelta       = 2
-	commentHotDelta    = 1
-	favoriteHotDelta   = 3
+	likeHotDelta     = 2
+	favoriteHotDelta = 3
+	commentHotDelta  = 1
+
+	// 查询窗口的上限取热度数据的保留时长，声明的窗口不会超过实际留得住的数据。
+	// 窗口按分钟滑动，所以榜单的可见刷新间隔是一分钟
 	defaultHotInterval = 60
-	maxHotInterval     = 1440
+	maxHotInterval     = feedrepo.HotRetentionMinutes
+
+	defaultHotLimit = 3
+	maxHotLimit     = 50
+
+	// 计分类型，标记键按它区分点赞、收藏与评论
+	hotTypeLike     = "like"
+	hotTypeFavorite = "favorite"
+	hotTypeComment  = "comment"
 )
 
 // Logic Feed 模块的业务逻辑，负责索引与热度，视频与用户数据都通过别人的 repo 取
@@ -38,6 +52,24 @@ type Logic struct {
 	favorites *favoriterepo.Repo
 	follows   *followrepo.Repo
 	uploader  *upload.Uploader
+}
+
+// NormalizeHotQuery 归一化热榜参数：记录不存在时取默认值，超出上限时取上限。
+// 归一化的结果要回给客户端，避免响应里声明的窗口与实际使用的窗口不一致
+func NormalizeHotQuery(limit uint64, interval int) (uint64, int) {
+	if limit == 0 {
+		limit = defaultHotLimit
+	}
+	if limit > maxHotLimit {
+		limit = maxHotLimit
+	}
+	if interval <= 0 {
+		interval = defaultHotInterval
+	}
+	if interval > maxHotInterval {
+		interval = maxHotInterval
+	}
+	return limit, interval
 }
 
 // GetFeedVideos 按发布时间倒序取一页，双字段游标分页，第一页 lastId 传 0
@@ -61,36 +93,42 @@ func (l *Logic) GetFeedVideos(ctx context.Context, limit uint64, lastCreatedAt i
 	return list, last.CreatedAt.UnixMilli(), last.Id, nil
 }
 
-// GetHotVideos 按热度倒序取一页
+// GetHotVideos 按热度倒序取一页。分数只由互动产生，窗口内的分数按分钟累加，
+// 衰减由桶过期完成，所以不需要任何定时任务
 func (l *Logic) GetHotVideos(ctx context.Context, limit uint64, offset uint64, interval int, userID uint64) ([]VideoItem, uint64, bool, error) {
-	if limit == 0 {
-		limit = 5
-	}
-	if interval <= 0 {
-		interval = defaultHotInterval
-	}
-	if interval > maxHotInterval {
-		interval = maxHotInterval
-	}
+	limit, interval = NormalizeHotQuery(limit, interval)
 
-	ids, consumed, hasMore, err := l.feed.HotIDs(ctx, limit, offset, interval)
+	items, consumed, hasMore, err := l.feed.HotPage(ctx, limit, offset, interval)
 	if err != nil {
 		return nil, offset, false, err
 	}
-	if len(ids) == 0 {
+	if len(items) == 0 {
 		return []VideoItem{}, offset, false, nil
 	}
-	items, err := l.videos.FilterByIDs(ctx, ids)
+
+	ids := make([]uint64, len(items))
+	scores := make(map[uint64]float64, len(items))
+	for i, item := range items {
+		ids[i] = item.ID
+		scores[item.ID] = item.Score
+	}
+
+	rows, err := l.videos.FilterByIDs(ctx, ids)
 	if err != nil {
 		return nil, offset, false, err
 	}
-	ordered := orderVideos(items, ids)
+	// 行已经不存在的成员在这一步被丢掉，页面会少几条，游标按实际取到的条数前进
+	ordered := orderVideos(rows, scores)
 	if len(ordered) == 0 {
 		return []VideoItem{}, offset + consumed, hasMore, nil
 	}
+
 	list, err := l.assemble(ctx, ordered, userID)
 	if err != nil {
 		return nil, offset, false, err
+	}
+	for i := range list {
+		list[i].Score = scores[list[i].Id]
 	}
 	return list, offset + consumed, hasMore, nil
 }
@@ -116,6 +154,7 @@ func (l *Logic) GetFollowFeedVideos(ctx context.Context, limit uint64, lastCreat
 	if len(items) == 0 {
 		return []VideoItem{}, 0, 0, nil
 	}
+
 	list, err := l.assemble(ctx, items, userID)
 	if err != nil {
 		return nil, 0, 0, err
@@ -124,23 +163,35 @@ func (l *Logic) GetFollowFeedVideos(ctx context.Context, limit uint64, lastCreat
 	return list, last.CreatedAt.UnixMilli(), last.Id, nil
 }
 
-// HandleVideoCreated 新视频进当前分钟的热度桶
-func (l *Logic) HandleVideoCreated(ctx context.Context, payload []byte) error {
-	var created videoevent.CreatedEvent
-	if err := json.Unmarshal(payload, &created); err != nil {
-		return consumer.Permanent(err)
+// score 给视频计一次分。事件时间已经超出保留时长的直接丢弃，
+// 窗口内同一个用户的同类互动由标记键保证只计一次
+func (l *Logic) score(ctx context.Context, scoreType string, videoID uint64, userID uint64, weight float64, occurredAt int64) error {
+	now := time.Now()
+	at := now
+	if occurredAt > 0 {
+		at = time.UnixMilli(occurredAt)
 	}
-	if created.VideoID == 0 {
-		return consumer.Permanent(errors.New("视频创建事件里没有 videoId"))
+	if at.After(now) {
+		// 时钟轻微偏差时按当前时刻处理，不写未来的桶
+		at = now
 	}
-	if err := l.feed.EnsureHotMember(ctx, created.VideoID, time.Now()); err != nil {
-		slog.Error("加入热度桶失败", "video_id", created.VideoID, "error", err)
+	if now.Sub(at) >= feedrepo.HotRetention {
+		// 已经超出保留窗口，写进去也不会被任何查询窗口读到
+		return nil
+	}
+
+	scored, err := l.feed.ScoreOnce(ctx, scoreType, videoID, userID, weight, at, now)
+	if err != nil {
+		slog.Error("热度计分失败", "type", scoreType, "video_id", videoID, "error", err)
 		return err
+	}
+	if !scored {
+		slog.Debug("窗口内已经计过分，跳过", "type", scoreType, "video_id", videoID, "user_id", userID)
 	}
 	return nil
 }
 
-// HandleVideoDeleted 把视频从热度桶里清掉
+// HandleVideoDeleted 把视频从保留窗口覆盖的热度桶里清掉
 func (l *Logic) HandleVideoDeleted(ctx context.Context, payload []byte) error {
 	var deleted videoevent.DeletedEvent
 	if err := json.Unmarshal(payload, &deleted); err != nil {
@@ -149,10 +200,11 @@ func (l *Logic) HandleVideoDeleted(ctx context.Context, payload []byte) error {
 	if deleted.VideoID == 0 {
 		return consumer.Permanent(errors.New("删除视频事件里没有 videoId"))
 	}
-	return l.feed.RemoveFromHotBuckets(ctx, deleted.VideoID, maxHotInterval)
+	return l.feed.RemoveFromHotBuckets(ctx, deleted.VideoID, feedrepo.HotRetentionMinutes)
 }
 
-// HandleLikeSwitched 只处理视频点赞，评论点赞不影响视频热度
+// HandleLikeSwitched 只处理视频点赞，评论点赞不影响视频热度。
+// 取消点赞不回减分数，窗口内已经计入的那一份保留到桶自然过期
 func (l *Logic) HandleLikeSwitched(ctx context.Context, payload []byte) error {
 	var switched likeevent.SwitchedEvent
 	if err := json.Unmarshal(payload, &switched); err != nil {
@@ -161,42 +213,40 @@ func (l *Logic) HandleLikeSwitched(ctx context.Context, payload []byte) error {
 	if switched.Target != likeevent.TargetVideo {
 		return nil
 	}
-	if switched.TargetID == 0 {
-		return consumer.Permanent(errors.New("点赞事件里没有 targetId"))
-	}
-	delta := float64(likeHotDelta)
 	if !switched.Liked {
-		delta = -delta
+		return nil
 	}
-	return l.feed.IncreaseHotScore(ctx, switched.TargetID, delta, time.Now())
+	if switched.TargetID == 0 || switched.Operator == 0 {
+		return consumer.Permanent(errors.New("点赞事件里缺少用户或目标 ID"))
+	}
+	return l.score(ctx, hotTypeLike, switched.TargetID, switched.Operator, likeHotDelta, switched.OccurredAt)
 }
 
-// HandleCommentCreated 评论创建加热度
-func (l *Logic) HandleCommentCreated(ctx context.Context, payload []byte) error {
-	var created commentevent.CreatedEvent
-	if err := json.Unmarshal(payload, &created); err != nil {
-		return consumer.Permanent(err)
-	}
-	if created.VideoID == 0 {
-		return consumer.Permanent(errors.New("评论事件里没有 videoId"))
-	}
-	return l.feed.IncreaseHotScore(ctx, created.VideoID, commentHotDelta, time.Now())
-}
-
-// HandleFavoriteSwitched 收藏加热度，取消收藏对称回减
+// HandleFavoriteSwitched 收藏加热度，取消收藏不回减
 func (l *Logic) HandleFavoriteSwitched(ctx context.Context, payload []byte) error {
 	var switched favoriteevent.SwitchedEvent
 	if err := json.Unmarshal(payload, &switched); err != nil {
 		return consumer.Permanent(err)
 	}
-	if switched.VideoID == 0 {
-		return consumer.Permanent(errors.New("收藏事件里没有 videoId"))
+	if switched.VideoID == 0 || switched.UserID == 0 {
+		return consumer.Permanent(errors.New("收藏事件里缺少用户或视频 ID"))
 	}
-	delta := float64(favoriteHotDelta)
 	if !switched.Favorited {
-		delta = -delta
+		return nil
 	}
-	return l.feed.IncreaseHotScore(ctx, switched.VideoID, delta, time.Now())
+	return l.score(ctx, hotTypeFavorite, switched.VideoID, switched.UserID, favoriteHotDelta, switched.OccurredAt)
+}
+
+// HandleCommentCreated 评论创建加热度。评论删除不回减
+func (l *Logic) HandleCommentCreated(ctx context.Context, payload []byte) error {
+	var created commentevent.CreatedEvent
+	if err := json.Unmarshal(payload, &created); err != nil {
+		return consumer.Permanent(err)
+	}
+	if created.VideoID == 0 || created.Commenter == 0 {
+		return consumer.Permanent(errors.New("评论事件里缺少用户或视频 ID"))
+	}
+	return l.score(ctx, hotTypeComment, created.VideoID, created.Commenter, commentHotDelta, created.OccurredAt)
 }
 
 func (l *Logic) assemble(ctx context.Context, items []videorepo.Video, userID uint64) ([]VideoItem, error) {
@@ -226,54 +276,78 @@ func (l *Logic) assemble(ctx context.Context, items []videorepo.Video, userID ui
 		}
 	}
 
-	if len(videoIDs) > 0 {
-		liked, err := l.likes.FilterLiked(ctx, likeevent.TargetVideo, userID, videoIDs)
-		if err != nil {
-			return nil, err
-		}
-		for i := range list {
-			list[i].IsLiked = liked[list[i].Id]
-		}
-	}
-
-	if len(videoIDs) > 0 {
-		favorited, err := l.favorites.FilterFavorited(ctx, userID, videoIDs)
-		if err != nil {
-			return nil, err
-		}
-		for i := range list {
-			list[i].IsFavorited = favorited[list[i].Id]
-		}
-	}
-
 	targets := make([]uint64, 0, len(authorIDs))
 	for _, authorID := range authorIDs {
 		if authorID != userID {
 			targets = append(targets, authorID)
 		}
 	}
-	if len(targets) > 0 {
-		followed, err := l.follows.FilterFollowing(ctx, userID, targets)
-		if err != nil {
-			return nil, err
+
+	// 三批状态查询合并到一条管道，一次往返取回
+	pipe := l.feed.Pipeline()
+	likedCmds := l.likes.AppendLiked(pipe, ctx, likeevent.TargetVideo, userID, videoIDs)
+	favoritedCmds := l.favorites.AppendFavorited(pipe, ctx, userID, videoIDs)
+	followCmds := l.follows.AppendFollowing(pipe, ctx, userID, targets)
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, err
+	}
+
+	liked, err := boolResults(likedCmds)
+	if err != nil {
+		return nil, err
+	}
+	favorited, err := boolResults(favoritedCmds)
+	if err != nil {
+		return nil, err
+	}
+	followed, err := boolResults(followCmds)
+	if err != nil {
+		return nil, err
+	}
+
+	followedByAuthor := make(map[uint64]bool, len(targets))
+	for i, authorID := range targets {
+		followedByAuthor[authorID] = followed[i]
+	}
+	for i := range list {
+		list[i].IsLiked = liked[i]
+		list[i].IsFavorited = favorited[i]
+		if list[i].AuthorID == 0 || list[i].AuthorID == userID {
+			list[i].IsFollow = false
+			continue
 		}
-		for i := range list {
-			list[i].IsFollow = followed[list[i].AuthorID]
-		}
+		list[i].IsFollow = followedByAuthor[list[i].AuthorID]
 	}
 	return list, nil
 }
 
-func orderVideos(items []videorepo.Video, ids []uint64) []videorepo.Video {
-	byID := make(map[uint64]videorepo.Video, len(items))
-	for _, item := range items {
-		byID[item.ID] = item
-	}
-	ordered := make([]videorepo.Video, 0, len(ids))
-	for _, id := range ids {
-		if item, ok := byID[id]; ok {
-			ordered = append(ordered, item)
+// boolResults 取出一批布尔命令的结果，键不存在按 false 处理
+func boolResults(commands []*redis.BoolCmd) ([]bool, error) {
+	out := make([]bool, len(commands))
+	for i, cmd := range commands {
+		value, err := cmd.Result()
+		if err != nil && !errors.Is(err, redis.Nil) {
+			return nil, err
 		}
+		out[i] = value
 	}
+	return out, nil
+}
+
+// orderVideos 按分数倒序排定，同分时用发布时间与 ID 定序，
+// 不让有序集合在分数相同时按成员字符串的字典序决定先后
+func orderVideos(items []videorepo.Video, scores map[uint64]float64) []videorepo.Video {
+	ordered := make([]videorepo.Video, len(items))
+	copy(ordered, items)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		left, right := ordered[i], ordered[j]
+		if scores[left.ID] != scores[right.ID] {
+			return scores[left.ID] > scores[right.ID]
+		}
+		if !left.CreateTime.Equal(right.CreateTime) {
+			return left.CreateTime.After(right.CreateTime)
+		}
+		return left.ID > right.ID
+	})
 	return ordered
 }

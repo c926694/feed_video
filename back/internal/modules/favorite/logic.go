@@ -67,9 +67,10 @@ func (l *Logic) setFavorite(ctx context.Context, videoID uint64, userID uint64, 
 	}
 
 	if err = l.producer.Publish(ctx, topic.FavoriteSwitched, strconv.FormatUint(videoID, 10), favoriteevent.SwitchedEvent{
-		VideoID:   videoID,
-		UserID:    userID,
-		Favorited: active,
+		VideoID:    videoID,
+		UserID:     userID,
+		Favorited:  active,
+		OccurredAt: time.Now().UnixMilli(),
 	}); err != nil {
 		if _, rollbackErr := l.repo.Set(ctx, videoID, userID, !active); rollbackErr != nil {
 			return false, httpx.New(httpx.CodeInternal, "收藏状态回滚失败")

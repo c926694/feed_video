@@ -67,6 +67,15 @@ func (r *Repo) Set(ctx context.Context, target string, targetID uint64, userID u
 	return result == 1, nil
 }
 
+// AppendLiked 把这一批目标的点赞状态查询追加到给定管道，供调用方合并成一次往返
+func (r *Repo) AppendLiked(pipe redis.Pipeliner, ctx context.Context, target string, userID uint64, targetIDs []uint64) []*redis.BoolCmd {
+	commands := make([]*redis.BoolCmd, len(targetIDs))
+	for i, targetID := range targetIDs {
+		commands[i] = pipe.SIsMember(ctx, keyFor(target, targetID), userID)
+	}
+	return commands
+}
+
 // FilterLiked 批量查询用户是否点赞了这些目标
 func (r *Repo) FilterLiked(ctx context.Context, target string, userID uint64, targetIDs []uint64) (map[uint64]bool, error) {
 	result := make(map[uint64]bool, len(targetIDs))
@@ -74,10 +83,7 @@ func (r *Repo) FilterLiked(ctx context.Context, target string, userID uint64, ta
 		return result, nil
 	}
 	pipeline := r.redisClient.Pipeline()
-	commands := make([]*redis.BoolCmd, len(targetIDs))
-	for i, targetID := range targetIDs {
-		commands[i] = pipeline.SIsMember(ctx, keyFor(target, targetID), userID)
-	}
+	commands := r.AppendLiked(pipeline, ctx, target, userID, targetIDs)
 	if _, err := pipeline.Exec(ctx); err != nil && err != redis.Nil {
 		return nil, err
 	}

@@ -78,18 +78,24 @@ func (r *Repo) Delete(ctx context.Context, follower uint64, following uint64) er
 		Delete(&Follow{}).Error
 }
 
+// AppendFollowing 把这一批用户的关注状态查询追加到给定管道，供调用方合并成一次往返
+func (r *Repo) AppendFollowing(pipe redis.Pipeliner, ctx context.Context, follower uint64, followingIDs []uint64) []*redis.BoolCmd {
+	key := followKey(follower)
+	commands := make([]*redis.BoolCmd, len(followingIDs))
+	for i, followingID := range followingIDs {
+		commands[i] = pipe.SIsMember(ctx, key, followingID)
+	}
+	return commands
+}
+
 // FilterFollowing 批量查询用户是否关注了这些人
 func (r *Repo) FilterFollowing(ctx context.Context, follower uint64, followingIDs []uint64) (map[uint64]bool, error) {
 	result := make(map[uint64]bool, len(followingIDs))
 	if len(followingIDs) == 0 {
 		return result, nil
 	}
-	key := followKey(follower)
 	pipeline := r.redisClient.Pipeline()
-	commands := make([]*redis.BoolCmd, len(followingIDs))
-	for i, followingID := range followingIDs {
-		commands[i] = pipeline.SIsMember(ctx, key, followingID)
-	}
+	commands := r.AppendFollowing(pipeline, ctx, follower, followingIDs)
 	if _, err := pipeline.Exec(ctx); err != nil && err != redis.Nil {
 		return nil, err
 	}

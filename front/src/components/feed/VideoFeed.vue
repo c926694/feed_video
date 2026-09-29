@@ -41,6 +41,7 @@ import CommentDrawer from "@/components/feed/CommentDrawer.vue";
 import VideoCard from "@/components/feed/VideoCard.vue";
 import type { Video } from "@/types/domain";
 import { useToast } from "@/composables/useToast";
+import { dedupeById } from "@/utils/collections";
 
 const { showToast } = useToast();
 type FeedTab = "recommend" | "follow" | "hot";
@@ -225,7 +226,8 @@ async function loadMore() {
         offset: hotNextOffset.value,
         limit: 5
       });
-      hotVideos.value = hotVideos.value.concat(hot.videos);
+      // 跨分钟时合并键会重建，相邻两页可能重叠，拼接后按 ID 去重
+      hotVideos.value = dedupeById(hotVideos.value.concat(hot.videos));
       hotNextOffset.value = hot.nextOffset;
       hotHasMore.value = hot.hasMore;
       return;

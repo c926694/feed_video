@@ -5,7 +5,6 @@ const (
 	VideoCreated     = "video_created"
 	VideoDeleted     = "video_deleted"
 	CommentCreated   = "comment_created"
-	CommentDeleted   = "comment_deleted"
 	LikeSwitched     = "like_switched"
 	FollowSwitched   = "follow_switched"
 	FavoriteSwitched = "favorite_switched"

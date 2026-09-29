@@ -80,10 +80,11 @@ func (l *Logic) setLike(ctx context.Context, target string, targetID uint64, use
 	}
 
 	if err = l.producer.Publish(ctx, topic.LikeSwitched, strconv.FormatUint(targetID, 10), event.SwitchedEvent{
-		Target:   target,
-		TargetID: targetID,
-		Liked:    active,
-		Operator: userID,
+		Target:     target,
+		TargetID:   targetID,
+		Liked:      active,
+		Operator:   userID,
+		OccurredAt: time.Now().UnixMilli(),
 	}); err != nil {
 		if _, rollbackErr := l.repo.Set(ctx, target, targetID, userID, !active); rollbackErr != nil {
 			return false, httpx.New(httpx.CodeInternal, fmt.Sprintf("点赞状态回滚失败: %v", rollbackErr))

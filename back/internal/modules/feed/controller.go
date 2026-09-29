@@ -42,12 +42,12 @@ func (h *Controller) GetFeedVideos(c *gin.Context) {
 }
 
 func (h *Controller) GetFeedHotVideos(c *gin.Context) {
-	interval, err := strconv.Atoi(c.DefaultQuery("interval", "60"))
+	interval, err := strconv.Atoi(c.DefaultQuery("interval", "0"))
 	if err != nil {
 		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "interval 参数不合法"))
 		return
 	}
-	limit, err := strconv.ParseUint(c.DefaultQuery("limit", "3"), 10, 64)
+	limit, err := strconv.ParseUint(c.DefaultQuery("limit", "0"), 10, 64)
 	if err != nil {
 		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "limit 参数不合法"))
 		return
@@ -57,6 +57,8 @@ func (h *Controller) GetFeedHotVideos(c *gin.Context) {
 		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "offset 参数不合法"))
 		return
 	}
+	// 先归一化再回传，响应里的 interval 与 limit 就是实际生效的那一份
+	limit, interval = NormalizeHotQuery(limit, interval)
 	list, nextOffset, hasMore, err := h.Logic.GetHotVideos(c.Request.Context(), limit, offset, interval, auth.UserID(c))
 	if err != nil {
 		httpx.Fail(c, err)

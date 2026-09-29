@@ -63,6 +63,15 @@ func (r *Repo) Set(ctx context.Context, videoID uint64, userID uint64, active bo
 	return result == 1, nil
 }
 
+// AppendFavorited 把这一批视频的收藏状态查询追加到给定管道，供调用方合并成一次往返
+func (r *Repo) AppendFavorited(pipe redis.Pipeliner, ctx context.Context, userID uint64, videoIDs []uint64) []*redis.BoolCmd {
+	commands := make([]*redis.BoolCmd, len(videoIDs))
+	for i, videoID := range videoIDs {
+		commands[i] = pipe.SIsMember(ctx, favoriteKey(videoID), userID)
+	}
+	return commands
+}
+
 // FilterFavorited 批量查询用户是否收藏了这些视频
 func (r *Repo) FilterFavorited(ctx context.Context, userID uint64, videoIDs []uint64) (map[uint64]bool, error) {
 	result := make(map[uint64]bool, len(videoIDs))
@@ -70,10 +79,7 @@ func (r *Repo) FilterFavorited(ctx context.Context, userID uint64, videoIDs []ui
 		return result, nil
 	}
 	pipeline := r.redisClient.Pipeline()
-	commands := make([]*redis.BoolCmd, len(videoIDs))
-	for i, videoID := range videoIDs {
-		commands[i] = pipeline.SIsMember(ctx, favoriteKey(videoID), userID)
-	}
+	commands := r.AppendFavorited(pipeline, ctx, userID, videoIDs)
 	if _, err := pipeline.Exec(ctx); err != nil && err != redis.Nil {
 		return nil, err
 	}
