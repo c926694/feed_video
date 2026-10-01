@@ -8,6 +8,7 @@
         :key="`${video.id}-${idx}`"
         :video="video"
         :active="idx === activeIndex"
+        :in-window="Math.abs(idx - activeIndex) <= 1"
         :show-follow="source !== 'works'"
         :show-delete="source === 'works'"
         @toggle-like="toggleLike(video.id)"
@@ -211,7 +212,7 @@ async function removeFromList(videoId: number, toastText: string) {
 function scrollToActive() {
   const node = containerRef.value;
   if (!node) return;
-  node.scrollTo({ top: activeIndex.value * node.clientHeight, behavior: "auto" });
+  node.scrollTo({ top: activeIndex.value * node.clientHeight, behavior: "smooth" });
 }
 
 function switchPrev() {

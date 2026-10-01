@@ -1,10 +1,11 @@
 <template>
-  <main ref="containerRef" class="feed-container" @scroll.passive="onScroll">
+  <main ref="containerRef" class="feed-container" @scroll.passive="onScroll" @wheel="onWheel">
     <VideoCard
       v-for="(video, idx) in displayVideos"
       :key="`${video.id}-${idx}`"
       :video="video"
       :active="idx === activeIndex"
+      :in-window="Math.abs(idx - activeIndex) <= 1"
       :framed="true"
       @toggle-like="toggleLike(video.id)"
       @toggle-favorite="toggleFavorite(video.id)"
@@ -177,8 +178,37 @@ function scrollToIndex(index: number) {
   if (!node) return;
   node.scrollTo({
     top: index * node.clientHeight,
-    behavior: "auto"
+    behavior: "smooth"
   });
+}
+
+let isWheeling = false;
+
+function onWheel(event: WheelEvent) {
+  if (Math.abs(event.deltaY) < 18) return;
+  if (isWheeling) {
+    event.preventDefault();
+    return;
+  }
+  if (event.deltaY > 0) {
+    if (activeIndex.value < displayVideos.value.length - 1) {
+      event.preventDefault();
+      isWheeling = true;
+      switchNext();
+      setTimeout(() => {
+        isWheeling = false;
+      }, 400);
+    }
+  } else if (event.deltaY < 0) {
+    if (activeIndex.value > 0) {
+      event.preventDefault();
+      isWheeling = true;
+      switchPrev();
+      setTimeout(() => {
+        isWheeling = false;
+      }, 400);
+    }
+  }
 }
 
 async function alignHotStartVideo() {
@@ -388,11 +418,10 @@ void loadInitial();
 
 <style scoped>
 .feed-container {
-  height: calc(100svh - 68px);
+  height: 100svh;
   overflow-y: auto;
   scroll-snap-type: y mandatory;
-  background: #000;
-  border-radius: 14px;
+  background-color: #000000;
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
@@ -407,53 +436,63 @@ void loadInitial();
   top: 50%;
   transform: translate(-50%, -50%);
   z-index: 12;
-  color: var(--text-muted);
-  font-size: 13px;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
 }
 
 .switch-nav {
   position: fixed;
-  right: 18px;
+  right: 24px;
   top: 50%;
   transform: translateY(-50%);
   z-index: 25;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 
 .switch-btn {
-  width: 34px;
-  height: 34px;
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.35);
-  background: rgba(0, 0, 0, 0.48);
-  color: #fff;
-  font-size: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+  font-size: 20px;
   line-height: 1;
   display: grid;
   place-items: center;
   cursor: pointer;
-  backdrop-filter: blur(6px);
+  backdrop-filter: blur(12px);
+  transition: transform 0.18s ease, background-color 0.18s ease, border-color 0.18s ease;
+}
+
+.switch-btn:hover:not(:disabled) {
+  transform: scale(1.08);
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.35);
 }
 
 .switch-btn:disabled {
   cursor: not-allowed;
-  opacity: 0.35;
+  opacity: 0.25;
 }
 
 .end-tip {
   position: fixed;
   left: 50%;
-  bottom: 18px;
+  bottom: 24px;
   transform: translateX(-50%);
   z-index: 26;
-  padding: 6px 12px;
+  padding: 8px 16px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  background: rgba(0, 0, 0, 0.45);
-  color: rgba(255, 255, 255, 0.88);
-  font-size: 12px;
-  backdrop-filter: blur(4px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(18, 18, 18, 0.75);
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 13px;
+  font-weight: 500;
+  backdrop-filter: blur(10px);
 }
 </style>

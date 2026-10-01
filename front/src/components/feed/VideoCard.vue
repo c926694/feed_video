@@ -1,23 +1,43 @@
 <template>
   <article class="video-card" :class="{ framed }">
-    <video
-      ref="videoRef"
-      class="video-player"
-      :poster="video.coverUrl"
-      :src="video.playUrl"
-      :muted="effectiveMuted"
-      loop
-      playsinline
-      preload="metadata"
-      :autoplay="active"
-      @click="onVideoTap"
-      @timeupdate="onTimeUpdate"
-      @durationchange="onDurationChange"
-      @loadedmetadata="onLoadedMetadata"
-    />
+    <div class="ambient-backdrop" aria-hidden="true">
+      <img v-if="video.coverUrl" :src="video.coverUrl" alt="ambient" class="ambient-img" />
+    </div>
 
-    <button class="overlay sound-btn" @click.stop="toggleMute">
-      {{ isMuted ? "开声" : "静音" }}
+    <div class="player-wrapper">
+      <video
+        v-if="inWindow"
+        ref="videoRef"
+        class="video-player"
+        :poster="video.coverUrl"
+        :src="video.playUrl"
+        :muted="effectiveMuted"
+        loop
+        playsinline
+        preload="metadata"
+        :autoplay="active"
+        @click="onVideoTap"
+        @timeupdate="onTimeUpdate"
+        @durationchange="onDurationChange"
+        @loadedmetadata="onLoadedMetadata"
+      />
+      <img
+        v-else
+        class="video-player"
+        :src="video.coverUrl"
+        alt="video-poster"
+      />
+
+      <div v-if="isPaused && inWindow" class="play-state-overlay" @click="onVideoTap">
+        <span class="big-play-icon">▶</span>
+      </div>
+    </div>
+
+    <div class="vignette-bottom" aria-hidden="true"></div>
+
+    <button class="sound-pill" :title="isMuted ? '点击开启声音' : '点击静音'" @click.stop="toggleMute">
+      <span class="sound-icon">{{ isMuted ? "🔇" : "🔊" }}</span>
+      <span class="sound-text">{{ isMuted ? "静音" : "开声" }}</span>
     </button>
 
     <ActionSidebar
@@ -32,20 +52,35 @@
       @delete-video="$emit('delete-video')"
     />
 
-    <div class="overlay info">
-      <div class="author-row">
-        <img v-if="video.author.avatar" :src="video.author.avatar" alt="作者头像" class="author-avatar" />
-        <span v-else class="author-fallback">{{ (video.author.nickname || video.author.username || "匿").slice(0, 1) }}</span>
-        <h3>作者：{{ video.author.nickname || video.author.username }}</h3>
+    <div class="info-overlay">
+      <div class="author-line">
+        <span class="author-tag">@{{ video.author.username || video.author.nickname }}</span>
       </div>
-      <p class="title">{{ video.title }}</p>
-      <p class="desc">{{ video.description }}</p>
+
+      <h3 v-if="video.title" class="video-heading">{{ video.title }}</h3>
+      <p v-if="video.description" class="video-caption">{{ video.description }}</p>
+
+      <div class="music-ticker">
+        <span class="music-note-icon">♫</span>
+        <div class="marquee-track">
+          <div class="marquee-content">
+            <span>原声 - {{ video.author.nickname || video.author.username }} · 原创音乐</span>
+            <span class="marquee-spacer"></span>
+            <span>原声 - {{ video.author.nickname || video.author.username }} · 原创音乐</span>
+          </div>
+        </div>
+      </div>
     </div>
 
-    <div class="overlay progress-wrap" @click.stop>
-      <span class="time-label">{{ formattedCurrentTime }} / {{ formattedDuration }}</span>
+    <div class="progress-controller" :class="{ seeking }" @click.stop>
+      <div class="scrub-track">
+        <div class="scrub-buffered" :style="{ width: `${progressValue}%` }"></div>
+        <div class="scrub-filled" :style="{ width: `${progressValue}%` }">
+          <span class="scrub-thumb"></span>
+        </div>
+      </div>
       <input
-        class="progress-slider"
+        class="scrub-input"
         type="range"
         min="0"
         max="100"
@@ -57,13 +92,15 @@
         @input="onSeekInput"
         @change="onSeekCommit"
       />
+      <div class="time-bubble">{{ formattedCurrentTime }} / {{ formattedDuration }}</div>
     </div>
   </article>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import ActionSidebar from "@/components/feed/ActionSidebar.vue";
+import { useSoundSetting } from "@/composables/useSoundSetting";
 import type { Video } from "@/types/domain";
 
 const props = withDefaults(
@@ -73,11 +110,13 @@ const props = withDefaults(
     showFollow?: boolean;
     showDelete?: boolean;
     framed?: boolean;
+    inWindow?: boolean;
   }>(),
   {
     showFollow: true,
     showDelete: false,
-    framed: false
+    framed: false,
+    inWindow: true
   }
 );
 
@@ -90,12 +129,16 @@ defineEmits<{
   (e: "delete-video"): void;
 }>();
 
+const { globalMuted, toggleMuted, setMuted } = useSoundSetting();
+const isMuted = globalMuted;
+
 const videoRef = ref<HTMLVideoElement | null>(null);
-const isMuted = ref(false);
+const isPaused = ref(false);
 const currentTime = ref(0);
 const duration = ref(0);
 const seeking = ref(false);
-const effectiveMuted = computed(() => !props.active || isMuted.value);
+
+const effectiveMuted = computed(() => !props.active || globalMuted.value);
 const progressValue = computed(() => {
   if (!duration.value) return 0;
   return Math.min(100, Math.max(0, (currentTime.value / duration.value) * 100));
@@ -104,52 +147,78 @@ const formattedCurrentTime = computed(() => formatTime(currentTime.value));
 const formattedDuration = computed(() => formatTime(duration.value));
 
 watch(
-  () => props.active,
-  async (active) => {
+  () => [props.active, props.inWindow],
+  async ([active, inWindow]) => {
+    if (!inWindow) {
+      isPaused.value = true;
+      return;
+    }
+    await nextTick();
     if (!videoRef.value) return;
     if (active) {
-      videoRef.value.muted = isMuted.value;
-      videoRef.value.volume = isMuted.value ? 0 : 1;
+      videoRef.value.muted = globalMuted.value;
+      videoRef.value.volume = globalMuted.value ? 0 : 1;
       try {
         await videoRef.value.play();
+        isPaused.value = false;
       } catch {
-        isMuted.value = true;
+        setMuted(true);
         videoRef.value.muted = true;
         videoRef.value.volume = 0;
         void videoRef.value.play();
+        isPaused.value = false;
       }
       return;
     }
     videoRef.value.pause();
+    isPaused.value = true;
     videoRef.value.muted = true;
     videoRef.value.volume = 0;
   },
   { immediate: true }
 );
 
+watch(
+  () => globalMuted.value,
+  (muted) => {
+    if (!videoRef.value || !props.active || !props.inWindow) return;
+    videoRef.value.muted = muted;
+    videoRef.value.volume = muted ? 0 : 1;
+  }
+);
+
 function onVideoTap() {
-  if (!videoRef.value || !props.active) return;
-  if (isMuted.value) {
-    isMuted.value = false;
-    videoRef.value.muted = false;
-    videoRef.value.volume = 1;
-    void videoRef.value.play();
+  if (!props.active || !props.inWindow) return;
+  if (globalMuted.value) {
+    setMuted(false);
+    if (videoRef.value) {
+      videoRef.value.muted = false;
+      videoRef.value.volume = 1;
+      void videoRef.value.play();
+      isPaused.value = false;
+    }
     return;
   }
+  if (!videoRef.value) return;
   if (videoRef.value.paused) {
     void videoRef.value.play();
+    isPaused.value = false;
   } else {
     videoRef.value.pause();
+    isPaused.value = true;
   }
 }
 
 function toggleMute() {
-  if (!videoRef.value || !props.active) return;
-  isMuted.value = !isMuted.value;
-  videoRef.value.muted = isMuted.value;
-  videoRef.value.volume = isMuted.value ? 0 : 1;
-  if (!isMuted.value) {
-    void videoRef.value.play();
+  if (!props.active) return;
+  toggleMuted();
+  if (videoRef.value) {
+    videoRef.value.muted = globalMuted.value;
+    videoRef.value.volume = globalMuted.value ? 0 : 1;
+    if (!globalMuted.value) {
+      void videoRef.value.play();
+      isPaused.value = false;
+    }
   }
 }
 
@@ -159,6 +228,7 @@ function onLoadedMetadata() {
   videoRef.value.volume = effectiveMuted.value ? 0 : 1;
   duration.value = Number.isFinite(videoRef.value.duration) ? videoRef.value.duration : 0;
   currentTime.value = Number.isFinite(videoRef.value.currentTime) ? videoRef.value.currentTime : 0;
+  isPaused.value = videoRef.value.paused;
 }
 
 function onDurationChange() {
@@ -205,180 +275,295 @@ function formatTime(rawSeconds: number) {
   height: 100svh;
   scroll-snap-align: start;
   overflow: hidden;
-  background: #000;
-}
-
-.video-card::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 44%;
-  z-index: 4;
-  pointer-events: none;
-  background: linear-gradient(180deg, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.62));
-}
-
-.video-card::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  right: 0;
-  width: 180px;
-  height: 100%;
-  z-index: 4;
-  pointer-events: none;
-  background: linear-gradient(270deg, rgba(0, 0, 0, 0.42), rgba(0, 0, 0, 0));
+  background-color: #000000;
+  display: flex;
+  justify-content: center;
+  align-items: center;
 }
 
 .video-card.framed {
-  width: calc(100% - 24px);
-  max-width: 1180px;
-  height: calc(100svh - 86px);
-  margin: 8px auto 10px;
-  border-radius: 24px;
+  width: min(100%, calc(100svh * 9 / 16));
+  max-width: 490px;
+  height: calc(100svh - 16px);
+  margin: 8px auto;
+  border-radius: 16px;
+  box-shadow: 0 16px 50px rgba(0, 0, 0, 0.85);
   border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.34);
-  background: #07090f;
+}
+
+.ambient-backdrop {
+  position: absolute;
+  inset: -20px;
+  overflow: hidden;
+  z-index: 1;
+  pointer-events: none;
+  opacity: 0.25;
+  filter: blur(40px);
+}
+
+.ambient-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.player-wrapper {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .video-player {
   width: 100%;
   height: 100%;
-  /* 竖屏视频放进宽卡片时，contain 会完整显示整幅画面，上下或左右留黑边；
-     cover 会按容器比例裁掉多余部分，画面会缺一块 */
-  object-fit: contain;
-  border-radius: inherit;
+  object-fit: cover;
+  background-color: #000000;
 }
 
-.overlay {
+.play-state-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background-color: rgba(0, 0, 0, 0.2);
+  cursor: pointer;
+  z-index: 5;
+}
+
+.big-play-icon {
+  font-size: 56px;
+  color: rgba(255, 255, 255, 0.7);
+  filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.6));
+  transform: scale(1);
+  transition: transform 0.2s ease;
+}
+
+.vignette-bottom {
   position: absolute;
   left: 0;
   right: 0;
+  bottom: 0;
+  height: 48%;
+  z-index: 4;
+  pointer-events: none;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.88) 0%, rgba(0, 0, 0, 0.45) 35%, transparent 100%);
 }
 
-.sound-btn {
-  top: 16px;
-  right: 14px;
-  left: auto;
-  z-index: 9;
-  border: 1px solid rgba(255, 255, 255, 0.35);
+.sound-pill {
+  position: absolute;
+  top: 18px;
+  right: 16px;
+  z-index: 10;
+  border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 999px;
-  padding: 6px 10px;
-  font-size: 12px;
-  color: #fff;
-  background: rgba(0, 0, 0, 0.54);
-  backdrop-filter: blur(6px);
+  padding: 6px 12px;
+  background-color: rgba(0, 0, 0, 0.45);
+  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  backdrop-filter: blur(8px);
+  transition: background-color 0.2s ease;
 }
 
-.info {
-  left: 14px;
-  right: 104px;
-  bottom: 84px;
+.sound-pill:hover {
+  background-color: rgba(0, 0, 0, 0.7);
+}
+
+.sound-icon {
+  font-size: 14px;
+}
+
+.info-overlay {
+  position: absolute;
+  left: 16px;
+  right: 84px;
+  bottom: 24px;
   z-index: 9;
-  padding: 10px 12px;
-  border-radius: 14px;
-  background: rgba(0, 0, 0, 0.34);
-  backdrop-filter: blur(4px);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  user-select: text;
 }
 
-h3 {
-  margin: 0;
-  font-size: 17px;
-}
-
-.author-row {
+.author-line {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.author-avatar,
-.author-fallback {
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
+.author-tag {
+  color: #ffffff;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.2px;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.75);
 }
 
-.author-avatar {
-  object-fit: cover;
-  border: 1px solid rgba(255, 255, 255, 0.45);
+.video-heading {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #ffffff;
+  line-height: 1.35;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
 }
 
-.author-fallback {
-  display: grid;
-  place-items: center;
-  font-size: 13px;
-  background: rgba(255, 255, 255, 0.18);
-  color: #fff;
-}
-
-.title,
-.desc {
-  margin: 8px 0 0;
+.video-caption {
+  margin: 0;
   font-size: 14px;
-  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.55);
+  font-weight: 400;
+  color: rgba(255, 255, 255, 0.9);
+  line-height: 1.4;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
 }
 
-.desc {
-  color: rgba(255, 255, 255, 0.8);
-}
-
-.progress-wrap {
-  left: 14px;
-  right: 14px;
-  bottom: 14px;
-  z-index: 10;
+.music-ticker {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 8px 10px;
-  border-radius: 12px;
-  background: rgba(0, 0, 0, 0.38);
-  backdrop-filter: blur(4px);
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 13px;
+  font-weight: 500;
+  overflow: hidden;
 }
 
-.time-label {
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.85);
-  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+.music-note-icon {
+  font-size: 14px;
+  flex-shrink: 0;
 }
 
-.progress-slider {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 100%;
-  height: 4px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.45);
+.marquee-track {
+  overflow: hidden;
+  white-space: nowrap;
+  mask-image: linear-gradient(90deg, transparent, #000000 8%, #000000 92%, transparent);
+}
+
+.marquee-content {
+  display: inline-flex;
+  align-items: center;
+  animation: marquee-roll 14s linear infinite;
+}
+
+.marquee-spacer {
+  display: inline-block;
+  width: 48px;
+}
+
+@keyframes marquee-roll {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+.progress-controller {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 14px;
+  z-index: 12;
+  display: flex;
+  align-items: flex-end;
   cursor: pointer;
 }
 
-.progress-slider::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: #fff;
-  border: none;
+.scrub-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background-color: rgba(255, 255, 255, 0.25);
+  transition: height 0.15s ease;
 }
 
-.progress-slider::-moz-range-thumb {
+.progress-controller:hover .scrub-track,
+.progress-controller.seeking .scrub-track {
+  height: 6px;
+}
+
+.scrub-filled {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background-color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.scrub-thumb {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: #fff;
-  border: none;
+  background-color: #ffffff;
+  margin-right: -5px;
+  opacity: 0;
+  transform: scale(0.6);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.progress-controller:hover .scrub-thumb,
+.progress-controller.seeking .scrub-thumb {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.scrub-input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+  margin: 0;
+  z-index: 3;
+}
+
+.time-bubble {
+  position: absolute;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 10px;
+  border-radius: 6px;
+  background-color: rgba(0, 0, 0, 0.75);
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 600;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.progress-controller:hover .time-bubble,
+.progress-controller.seeking .time-bubble {
+  opacity: 1;
 }
 
 @media (max-width: 900px) {
   .video-card.framed {
-    width: calc(100% - 24px);
-    height: calc(100svh - 66px);
-    margin: 8px auto;
-    border-radius: 22px;
+    width: 100%;
+    max-width: 100%;
+    height: 100svh;
+    margin: 0;
+    border-radius: 0;
+    border: none;
+  }
+
+  .sound-pill {
+    top: 64px;
+    right: 12px;
   }
 }
 </style>

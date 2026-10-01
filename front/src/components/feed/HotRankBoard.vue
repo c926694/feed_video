@@ -206,14 +206,16 @@ onMounted(() => {
 
 <style scoped>
 .hot-board {
-  min-height: calc(100svh - 68px);
-  border-radius: 18px;
-  background:
-    radial-gradient(circle at top right, rgba(0, 193, 168, 0.18), transparent 34%),
-    radial-gradient(circle at left 20%, rgba(176, 24, 72, 0.22), transparent 30%),
-    linear-gradient(180deg, rgba(25, 7, 14, 0.96), rgba(8, 11, 20, 0.98));
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  overflow: hidden;
+  height: 100svh;
+  overflow-y: auto;
+  padding-top: 64px;
+  background-color: #000000;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.hot-board::-webkit-scrollbar {
+  display: none;
 }
 
 .hero-shell {

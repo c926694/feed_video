@@ -1,39 +1,88 @@
-﻿<template>
+<template>
   <section class="feed-page">
     <aside class="left-rail">
       <div class="brand">
-        <span class="logo-dot"></span>
-        <strong>Feed Video</strong>
+        <div class="brand-glitch" aria-hidden="true">
+          <span class="glitch-cyan"></span>
+          <span class="glitch-red"></span>
+          <span class="glitch-main"></span>
+        </div>
+        <strong class="brand-title">Feed</strong>
       </div>
 
-      <RouterLink class="rail-link active" to="/feed">推荐</RouterLink>
-      <RouterLink class="rail-link" to="/upload">发布</RouterLink>
-      <RouterLink class="rail-link" to="/profile">我的</RouterLink>
+      <nav class="rail-nav">
+        <RouterLink class="rail-link" :class="{ active: tab === 'recommend' }" to="/feed" @click="changeTab('recommend')">
+          <span class="rail-icon">
+            <svg viewBox="0 0 24 24" class="svg-icon">
+              <path d="M12 3 3 10.5V21h6v-6h6v6h6V10.5L12 3Z" fill="currentColor" />
+            </svg>
+          </span>
+          <span class="rail-text">推荐</span>
+        </RouterLink>
+
+        <RouterLink class="rail-link" :class="{ active: tab === 'follow' }" to="/feed" @click="changeTab('follow')">
+          <span class="rail-icon">
+            <svg viewBox="0 0 24 24" class="svg-icon">
+              <path d="M16 11c1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3 1.34 3 3 3Zm-8 0c1.66 0 3-1.34 3-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3Zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5Zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5Z" fill="currentColor" />
+            </svg>
+          </span>
+          <span class="rail-text">关注</span>
+        </RouterLink>
+
+        <RouterLink class="rail-link" to="/upload">
+          <span class="rail-icon">
+            <svg viewBox="0 0 24 24" class="svg-icon">
+              <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2Z" fill="currentColor" />
+            </svg>
+          </span>
+          <span class="rail-text">发布</span>
+        </RouterLink>
+
+        <RouterLink class="rail-link" to="/profile">
+          <span class="rail-icon">
+            <svg viewBox="0 0 24 24" class="svg-icon">
+              <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4Zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4Z" fill="currentColor" />
+            </svg>
+          </span>
+          <span class="rail-text">我的</span>
+        </RouterLink>
+      </nav>
     </aside>
 
     <section class="main-stage">
       <header class="top-bar">
         <div class="feed-tabs">
-          <button :class="{ active: tab === 'recommend' }" @click="changeTab('recommend')">推荐</button>
           <button :class="{ active: tab === 'follow' }" @click="changeTab('follow')">关注</button>
+          <span class="tab-divider">|</span>
+          <button :class="{ active: tab === 'recommend' }" @click="changeTab('recommend')">推荐</button>
+          <span class="tab-divider">|</span>
           <button :class="{ active: tab === 'hot' }" @click="changeTab('hot')">热门</button>
           <button v-if="tab === 'hot' && hotPlayMode" class="playback-back" @click="backToHotBoard">返回热榜</button>
         </div>
 
         <div class="quick-nav">
-          <RouterLink to="/upload">发布</RouterLink>
-          <RouterLink to="/profile">我的</RouterLink>
+          <RouterLink class="upload-btn" to="/upload">
+            <span class="plus-icon">+</span>
+            <span>上传</span>
+          </RouterLink>
+          <RouterLink class="profile-link" to="/profile">我的</RouterLink>
         </div>
       </header>
 
-      <HotRankBoard v-if="tab === 'hot' && !hotPlayMode" @play="openHotPlayback" />
-      <VideoFeed
-        v-else-if="tab === 'hot'"
-        :tab="tab"
-        :initial-hot-videos="hotSeedVideos"
-        :initial-hot-video-id="hotSeedVideoId"
-      />
-      <VideoFeed v-else :tab="tab" />
+      <div class="stage-body">
+        <HotRankBoard
+          v-if="hasLoadedHot"
+          v-show="tab === 'hot' && !hotPlayMode"
+          @play="openHotPlayback"
+        />
+        <VideoFeed
+          v-if="tab === 'hot' && hotPlayMode"
+          :tab="tab"
+          :initial-hot-videos="hotSeedVideos"
+          :initial-hot-video-id="hotSeedVideoId"
+        />
+        <VideoFeed v-else-if="tab !== 'hot'" :tab="tab" />
+      </div>
     </section>
   </section>
 </template>
@@ -46,11 +95,15 @@ import type { Video } from "@/types/domain";
 
 const tab = ref<"recommend" | "follow" | "hot">("recommend");
 const hotPlayMode = ref(false);
+const hasLoadedHot = ref(false);
 const hotSeedVideos = ref<Video[]>([]);
 const hotSeedVideoId = ref(0);
 
 function changeTab(nextTab: "recommend" | "follow" | "hot") {
   tab.value = nextTab;
+  if (nextTab === "hot") {
+    hasLoadedHot.value = true;
+  }
 }
 
 function openHotPlayback(payload: { videoId: number; videos: Video[] }) {
@@ -66,122 +119,248 @@ function backToHotBoard() {
 watch(
   () => tab.value,
   (value) => {
-    if (value !== "hot") {
-      hotPlayMode.value = false;
-      hotSeedVideoId.value = 0;
-      hotSeedVideos.value = [];
+    if (value === "hot") {
+      hasLoadedHot.value = true;
     }
-  }
+  },
+  { immediate: true }
 );
 </script>
 
 <style scoped>
 .feed-page {
-  min-height: 100svh;
-  background: linear-gradient(150deg, #0e1324 0%, #131b31 35%, #170f22 100%);
+  width: 100vw;
+  height: 100svh;
+  background-color: #000000;
   display: grid;
-  grid-template-columns: 124px 1fr;
-  gap: 16px;
-  padding: 12px;
+  grid-template-columns: 220px 1fr;
+  overflow: hidden;
 }
 
 .left-rail {
-  border-radius: 16px;
-  background: rgba(11, 14, 24, 0.88);
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  padding: 16px 10px;
+  background-color: #000000;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 20px 14px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 20px;
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: 8px;
-  color: #fff;
-  margin-bottom: 8px;
+  gap: 10px;
+  padding: 0 10px;
+  user-select: none;
 }
 
-.logo-dot {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #17d7d1, #ff4d6d);
+.brand-glitch {
+  position: relative;
+  width: 28px;
+  height: 28px;
+}
+
+.glitch-cyan,
+.glitch-red,
+.glitch-main {
+  position: absolute;
+  inset: 0;
+  border-radius: 6px;
+}
+
+.glitch-cyan {
+  background: var(--tiktok-cyan);
+  transform: translate(-2px, -1px);
+  opacity: 0.85;
+}
+
+.glitch-red {
+  background: var(--tiktok-red);
+  transform: translate(2px, 1px);
+  mix-blend-mode: screen;
+  opacity: 0.85;
+}
+
+.glitch-main {
+  background: #ffffff;
+  clip-path: polygon(25% 10%, 75% 10%, 75% 90%, 25% 90%);
+}
+
+.brand-title {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+  color: #ffffff;
+}
+
+.rail-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .rail-link {
-  display: block;
-  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
   border-radius: 10px;
-  color: #b8c0db;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 16px;
+  font-weight: 600;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 
-.rail-link.active,
 .rail-link:hover {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.09);
+  background-color: rgba(255, 255, 255, 0.06);
+  color: #ffffff;
+}
+
+.rail-link.active {
+  color: var(--tiktok-red);
+}
+
+.rail-icon {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.svg-icon {
+  width: 100%;
+  height: 100%;
 }
 
 .main-stage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100svh;
+  background-color: #000000;
   min-width: 0;
 }
 
 .top-bar {
-  height: 56px;
-  border-radius: 14px;
-  background: rgba(11, 14, 24, 0.88);
-  border: 1px solid rgba(255, 255, 255, 0.09);
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 58px;
+  z-index: 30;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 12px;
-  margin-bottom: 12px;
+  padding: 0 24px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.65) 0%, transparent 100%);
+  pointer-events: none;
+}
+
+.feed-tabs,
+.quick-nav {
+  pointer-events: auto;
 }
 
 .feed-tabs {
-  display: inline-flex;
-  gap: 8px;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .feed-tabs button {
   border: none;
-  border-radius: 999px;
-  padding: 8px 12px;
-  background: rgba(255, 255, 255, 0.06);
-  color: #bdc6e2;
-  cursor: pointer;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 17px;
+  font-weight: 700;
+  padding: 6px 4px;
+  position: relative;
+  transition: color 0.2s ease;
+}
+
+.feed-tabs button:hover {
+  color: #ffffff;
 }
 
 .feed-tabs button.active {
-  color: #fff;
-  background: linear-gradient(90deg, #2f6df5, #5f48e6);
+  color: #ffffff;
+}
+
+.feed-tabs button.active::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 24px;
+  height: 3px;
+  border-radius: 2px;
+  background-color: #ffffff;
+}
+
+.tab-divider {
+  color: rgba(255, 255, 255, 0.2);
+  font-size: 14px;
 }
 
 .playback-back {
   border: none;
   border-radius: 999px;
-  padding: 8px 12px;
-  background: rgba(255, 255, 255, 0.09);
-  color: #dfe7ff;
-  cursor: pointer;
+  padding: 6px 12px;
+  background-color: rgba(255, 255, 255, 0.15);
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .quick-nav {
-  display: inline-flex;
-  gap: 10px;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 14px;
 }
 
-.quick-nav a {
-  color: #d9e2ff;
+.upload-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 16px;
+  border-radius: 4px;
+  background-color: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
   font-size: 14px;
+  font-weight: 600;
+  transition: background-color 0.15s ease;
+}
+
+.upload-btn:hover {
+  background-color: rgba(255, 255, 255, 0.16);
+}
+
+.plus-icon {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.profile-link {
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.stage-body {
+  flex: 1;
+  height: 100%;
+  overflow: hidden;
 }
 
 @media (max-width: 900px) {
   .feed-page {
     grid-template-columns: 1fr;
-    padding: 0;
-    gap: 0;
   }
 
   .left-rail {
@@ -189,10 +368,11 @@ watch(
   }
 
   .top-bar {
-    border-radius: 0;
-    margin-bottom: 0;
-    border-left: none;
-    border-right: none;
+    padding: 0 16px;
+  }
+
+  .quick-nav {
+    display: none;
   }
 }
 </style>

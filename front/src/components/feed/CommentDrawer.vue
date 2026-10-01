@@ -3,8 +3,8 @@
     <section v-if="open" class="mask" @click.self="$emit('close')">
       <div class="sheet">
         <header>
-          <h4>评论</h4>
-          <button @click="$emit('close')">关闭</button>
+          <h4>评论 ({{ comments.length }})</h4>
+          <button class="close-btn" @click="$emit('close')">✕</button>
         </header>
 
         <ul class="list">
@@ -296,46 +296,62 @@ async function onReplyLike(commentId: number, replyId: number) {
 .mask {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.42);
+  background-color: rgba(0, 0, 0, 0.65);
   z-index: 90;
+  backdrop-filter: blur(4px);
 }
 
 .sheet {
   position: absolute;
   top: 0;
   right: 0;
-  width: min(420px, 34vw);
+  width: min(440px, 36vw);
   height: 100svh;
-  background: rgba(15, 19, 34, 0.96);
-  border-left: 1px solid var(--line);
-  box-shadow: -24px 0 60px rgba(0, 0, 0, 0.32);
+  background-color: rgba(18, 18, 18, 0.98);
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: -20px 0 60px rgba(0, 0, 0, 0.8);
   display: flex;
   flex-direction: column;
 }
 
 header {
-  padding: 14px;
+  padding: 16px 20px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 h4 {
   margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: #ffffff;
 }
 
-header button {
+.close-btn {
   border: none;
-  background: transparent;
-  color: var(--text-muted);
+  background-color: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.7);
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.close-btn:hover {
+  background-color: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
 }
 
 .list {
   flex: 1;
   margin: 0;
-  padding: 0 14px;
-  overflow: auto;
+  padding: 8px 20px;
+  overflow-y: auto;
   list-style: none;
   scrollbar-width: none;
   -ms-overflow-style: none;
@@ -346,76 +362,96 @@ header button {
 }
 
 li {
-  padding: 12px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 14px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 .author-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  color: var(--text-muted);
-  font-size: 12px;
+  gap: 10px;
+  color: rgba(255, 255, 255, 0.65);
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .author-row img {
-  width: 24px;
-  height: 24px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   object-fit: cover;
+  border: 1px solid rgba(255, 255, 255, 0.15);
 }
 
 p {
   margin: 8px 0;
+  color: #ffffff;
+  font-size: 14px;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+small {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 12px;
 }
 
 .like-btn,
-.reply-btn {
+.reply-btn,
+.delete-btn {
   border: none;
-  color: var(--text-muted);
+  color: rgba(255, 255, 255, 0.55);
   background: transparent;
   padding: 0;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  transition: color 0.15s ease;
+}
+
+.like-btn:hover,
+.reply-btn:hover {
+  color: #ffffff;
 }
 
 .like-btn.active {
-  color: #ff5d7a;
-}
-
-.reply-btn {
-  margin-left: 14px;
+  color: var(--tiktok-red);
 }
 
 .delete-btn {
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  padding: 0;
-  margin-left: 14px;
+  color: rgba(255, 255, 255, 0.35);
+}
+
+.delete-btn:hover {
+  color: var(--tiktok-red);
 }
 
 .me-badge {
-  background: var(--accent);
-  color: #fff;
+  background-color: var(--tiktok-red);
+  color: #ffffff;
   font-style: normal;
   font-size: 10px;
+  font-weight: 700;
   line-height: 1;
-  padding: 2px 5px;
+  padding: 2px 6px;
   border-radius: 999px;
 }
 
 .icon-svg {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   fill: currentColor;
 }
 
 .replies {
-  margin: 8px 0 0;
-  padding: 8px 0 0 14px;
-  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  margin: 10px 0 0;
+  padding: 10px 0 0 16px;
+  border-left: 2px solid rgba(255, 255, 255, 0.08);
   list-style: none;
 }
 
@@ -425,13 +461,14 @@ p {
 }
 
 .reply-author {
-  color: var(--text-muted);
+  color: rgba(255, 255, 255, 0.7);
   font-size: 12px;
+  font-weight: 600;
 }
 
 .reply-author img {
-  width: 18px;
-  height: 18px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   object-fit: cover;
   vertical-align: middle;
@@ -439,61 +476,90 @@ p {
 }
 
 .reply-to {
-  color: var(--text-muted);
+  color: rgba(255, 255, 255, 0.45);
   font-size: 12px;
+  margin-left: 6px;
 }
 
 .replies p {
-  margin: 4px 0;
+  margin: 4px 0 6px;
+  font-size: 13px;
 }
 
 .more-btn,
 .load-btn {
   border: none;
   background: transparent;
-  color: var(--accent);
-  font-size: 12px;
-  padding: 6px 0;
+  color: rgba(255, 255, 255, 0.65);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 0;
   display: block;
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.more-btn:hover,
+.load-btn:hover {
+  color: #ffffff;
 }
 
 .load-btn {
-  margin: 0 14px;
+  margin: 8px 20px;
+  text-align: center;
+  background-color: rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  padding: 10px 0;
 }
 
 .composer {
   display: grid;
   grid-template-columns: 1fr auto auto;
   gap: 8px;
-  padding: 12px 14px calc(12px + var(--safe-bottom));
-  border-top: 1px solid var(--line);
+  padding: 14px 20px calc(14px + var(--safe-bottom));
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background-color: #121212;
 }
 
 input {
-  border: 1px solid var(--line);
+  border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.04);
-  color: #fff;
-  padding: 10px 12px;
+  background-color: rgba(255, 255, 255, 0.07);
+  color: #ffffff;
+  padding: 10px 16px;
+  outline: none;
+  transition: border-color 0.18s ease;
+}
+
+input:focus {
+  border-color: rgba(255, 255, 255, 0.35);
 }
 
 .composer button {
   border: none;
   border-radius: 999px;
-  background: var(--accent);
-  color: #fff;
-  padding: 0 16px;
+  background-color: var(--tiktok-red);
+  color: #ffffff;
+  padding: 0 18px;
+  font-size: 14px;
+  font-weight: 600;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.composer button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 .composer .cancel-reply {
-  background: transparent;
-  color: var(--text-muted);
-  border: 1px solid var(--line);
+  background-color: transparent;
+  color: rgba(255, 255, 255, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.15);
 }
 
 .drawer-enter-active,
 .drawer-leave-active {
-  transition: opacity 0.2s ease;
+  transition: opacity 0.22s ease;
 }
 
 .drawer-enter-from,
@@ -503,7 +569,7 @@ input {
 
 .drawer-enter-active .sheet,
 .drawer-leave-active .sheet {
-  transition: transform 0.24s ease;
+  transition: transform 0.26s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .drawer-enter-from .sheet,
@@ -511,15 +577,20 @@ input {
   transform: translateX(100%);
 }
 
-@media (max-width: 900px) {
-  .sheet {
-    width: min(100vw, 380px);
-  }
-}
-
-@media (max-width: 640px) {
+@media (max-width: 768px) {
   .sheet {
     width: 100vw;
+    height: 72svh;
+    top: auto;
+    bottom: 0;
+    border-radius: 16px 16px 0 0;
+    border-left: none;
+    border-top: 1px solid rgba(255, 255, 255, 0.12);
+  }
+
+  .drawer-enter-from .sheet,
+  .drawer-leave-to .sheet {
+    transform: translateY(100%);
   }
 }
 </style>
