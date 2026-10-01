@@ -282,8 +282,8 @@ function formatTime(rawSeconds: number) {
 }
 
 .video-card.framed {
-  width: min(100%, calc(100svh * 9 / 16));
-  max-width: 490px;
+  width: calc(100% - 32px);
+  max-width: 1080px;
   height: calc(100svh - 16px);
   margin: 8px auto;
   border-radius: 16px;
@@ -320,8 +320,9 @@ function formatTime(rawSeconds: number) {
 .video-player {
   width: 100%;
   height: 100%;
-  object-fit: cover;
-  background-color: #000000;
+  object-fit: contain;
+  background-color: transparent;
+  border-radius: inherit;
 }
 
 .play-state-overlay {
@@ -347,10 +348,10 @@ function formatTime(rawSeconds: number) {
   left: 0;
   right: 0;
   bottom: 0;
-  height: 48%;
+  height: 32%;
   z-index: 4;
   pointer-events: none;
-  background: linear-gradient(to top, rgba(0, 0, 0, 0.88) 0%, rgba(0, 0, 0, 0.45) 35%, transparent 100%);
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.75) 0%, rgba(0, 0, 0, 0.25) 40%, transparent 100%);
 }
 
 .sound-pill {

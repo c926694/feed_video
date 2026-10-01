@@ -9,6 +9,7 @@
         :video="video"
         :active="idx === activeIndex"
         :in-window="Math.abs(idx - activeIndex) <= 1"
+        :framed="true"
         :show-follow="source !== 'works'"
         :show-delete="source === 'works'"
         @toggle-like="toggleLike(video.id)"

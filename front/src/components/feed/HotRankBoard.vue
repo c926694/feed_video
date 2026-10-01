@@ -345,15 +345,18 @@ onMounted(() => {
   background: #10141e;
 }
 
-.cover-image,
+.cover-image {
+  width: 100%;
+  height: 100%;
+  min-height: 188px;
+  object-fit: contain;
+  background-color: #05070e;
+}
+
 .cover-fallback {
   width: 100%;
   height: 100%;
   min-height: 188px;
-  object-fit: cover;
-}
-
-.cover-fallback {
   display: grid;
   place-items: center;
   color: rgba(255, 255, 255, 0.65);
