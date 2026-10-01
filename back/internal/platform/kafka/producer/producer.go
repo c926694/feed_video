@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/segmentio/kafka-go"
+
+	"simple_tiktok/internal/platform/kafka/eventid"
 )
 
 const (
@@ -36,20 +38,24 @@ func New(brokers []string) (*Producer, error) {
 	}, nil
 }
 
-// Publish 把 payload 序列化后发送到指定 topic，失败时带退避重试
+// Publish 把 payload 序列化后发送到指定 topic，每次发布生成一个新的事件 ID
 func (p *Producer) Publish(ctx context.Context, name string, key string, payload any) error {
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("序列化 %s 的消息失败: %w", name, err)
 	}
-	return p.PublishRaw(ctx, name, key, data)
+	return p.PublishRaw(ctx, name, key, data, eventid.New())
 }
 
 // PublishRaw 发送已经序列化好的消息，供转发失败消息这类场景使用。
+// eventID 为空时新生成一个；转发失败消息时沿用原消息的 ID，让同一条事件在整个链路里保持同一个标识。
 // key 非空时按 key 哈希挑分区，同一个实体的事件因此进同一个分区、按写入顺序被消费；
 // key 为空表示这条消息不要求顺序，交给均衡器自己分散
-func (p *Producer) PublishRaw(ctx context.Context, name string, key string, value []byte) error {
+func (p *Producer) PublishRaw(ctx context.Context, name string, key string, value []byte, eventID string) error {
 	writer := p.writerFor(name)
+	if eventID == "" {
+		eventID = eventid.New()
+	}
 	var msgKey []byte
 	if key != "" {
 		msgKey = []byte(key)
@@ -57,9 +63,10 @@ func (p *Producer) PublishRaw(ctx context.Context, name string, key string, valu
 	var lastErr error
 	for attempt := 0; attempt < retryTimes; attempt++ {
 		lastErr = writer.WriteMessages(ctx, kafka.Message{
-			Key:   msgKey,
-			Value: value,
-			Time:  time.Now(),
+			Key:     msgKey,
+			Value:   value,
+			Time:    time.Now(),
+			Headers: eventid.HeaderOf(eventID),
 		})
 		if lastErr == nil {
 			return nil
