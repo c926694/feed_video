@@ -11,7 +11,6 @@ import (
 	"github.com/segmentio/kafka-go"
 	"golang.org/x/sync/errgroup"
 
-	"simple_tiktok/internal/platform/kafka/eventid"
 	"simple_tiktok/internal/platform/kafka/producer"
 	"simple_tiktok/internal/platform/kafka/topic"
 )
@@ -128,18 +127,13 @@ func (c *Consumer) consume(ctx context.Context, entry subscription) error {
 
 // dispatch 执行处理函数。可重试的错误带退避重试，仍失败则把原始消息转发到失败 topic，
 // 处理函数里的 panic 就地恢复，两种情况都提交位点继续处理后续消息。
-// 每行日志都带事件 ID 与模块名，同一条事件被多个模块各处理一遍时，
-// 按这两个字段就能把整条链路串起来，也能离线统计有没有被重复处理
+// 每行日志都带模块名，同一个 topic 被多个模块订阅时按它区分
 func (c *Consumer) dispatch(ctx context.Context, entry subscription, msg kafka.Message) {
-	eventID := eventid.FromHeaders(msg.Headers)
-	ctx = WithEventID(ctx, eventID)
-
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("处理消息时发生 panic",
 				"topic", entry.name,
 				"subscriber", c.subscriber,
-				"event_id", eventID,
 				"partition", msg.Partition,
 				"offset", msg.Offset,
 				"panic", r,
@@ -155,7 +149,6 @@ func (c *Consumer) dispatch(ctx context.Context, entry subscription, msg kafka.M
 				"topic", entry.name,
 				"subscriber", c.subscriber,
 				"handler", entry.handlerName(),
-				"event_id", eventID,
 				"partition", msg.Partition,
 				"offset", msg.Offset,
 				"attempt", attempt+1)
@@ -173,14 +166,12 @@ func (c *Consumer) dispatch(ctx context.Context, entry subscription, msg kafka.M
 	slog.Error("消息处理失败",
 		"topic", entry.name,
 		"subscriber", c.subscriber,
-		"event_id", eventID,
 		"partition", msg.Partition,
 		"offset", msg.Offset,
 		"error", lastErr)
 
-	// 转发时沿用原消息的事件 ID，同一条事件在失败 topic 里也保持同一个标识
 	failedTopic := entry.name + topic.FailedSuffix
-	if err := c.dlqProducer.PublishRaw(ctx, failedTopic, string(msg.Key), msg.Value, eventID); err != nil {
-		slog.Error("转发失败消息失败", "topic", failedTopic, "event_id", eventID, "offset", msg.Offset, "error", err)
+	if err := c.dlqProducer.PublishRaw(ctx, failedTopic, string(msg.Key), msg.Value); err != nil {
+		slog.Error("转发失败消息失败", "topic", failedTopic, "offset", msg.Offset, "error", err)
 	}
 }

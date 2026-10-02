@@ -14,6 +14,7 @@ import (
 	favoriteevent "simple_tiktok/internal/modules/favorite/event"
 	favoriterepo "simple_tiktok/internal/modules/favorite/repo"
 	feedrepo "simple_tiktok/internal/modules/feed/repo"
+	followevent "simple_tiktok/internal/modules/follow/event"
 	followrepo "simple_tiktok/internal/modules/follow/repo"
 	likeevent "simple_tiktok/internal/modules/like/event"
 	likerepo "simple_tiktok/internal/modules/like/repo"
@@ -41,6 +42,20 @@ const (
 	hotTypeLike     = "like"
 	hotTypeFavorite = "favorite"
 	hotTypeComment  = "comment"
+
+	// bigAuthorFollowers 大号阈值。粉丝数达到它的作者发布时只写自己的发件箱，
+	// 由粉丝读取时现取；低于它就逐个推进粉丝的收件箱。
+	// 取值依据是一次发布的写扩散预算：最坏情况下一条发布最多写这么多次收件箱
+	bigAuthorFollowers = 5000
+
+	// 扇出时每批取多少个粉丝写一次管道
+	followFanoutBatch = 500
+
+	// 关注时回填的历史内容条数
+	followBackfillLimit = 20
+
+	// 关注流读取时多取的候选条数，补上已删除内容被过滤后造成的空缺
+	followCandidateExtra = 20
 )
 
 // Logic Feed 模块的业务逻辑，负责索引与热度，视频与用户数据都通过别人的 repo 取
@@ -133,7 +148,9 @@ func (l *Logic) GetHotVideos(ctx context.Context, limit uint64, offset uint64, i
 	return list, offset + consumed, hasMore, nil
 }
 
-// GetFollowFeedVideos 取关注的人发布的视频，双字段游标分页，第一页 lastId 传 0
+// GetFollowFeedVideos 取关注的人发布的视频，双字段游标分页，第一页 lastId 传 0。
+// 优先读推拉结合建起来的索引：小号的内容在我的收件箱里，
+// 大号的内容去他的发件箱现取；索引不可用时退回按作者查表
 func (l *Logic) GetFollowFeedVideos(ctx context.Context, limit uint64, lastCreatedAt int64, lastId uint64, userID uint64) ([]VideoItem, int64, uint64, error) {
 	followingIDs, err := l.follows.FollowingIDs(ctx, userID)
 	if err != nil {
@@ -147,6 +164,47 @@ func (l *Logic) GetFollowFeedVideos(ctx context.Context, limit uint64, lastCreat
 	if lastId > 0 {
 		cursor = time.UnixMilli(lastCreatedAt)
 	}
+
+	items, indexed, err := l.feed.FollowPage(ctx, userID, followingIDs, cursor, lastId, int(limit)+followCandidateExtra)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	if !indexed {
+		return l.listFollowFeedFromTable(ctx, followingIDs, limit, cursor, lastId, userID)
+	}
+
+	ids := make([]uint64, len(items))
+	scores := make(map[uint64]float64, len(items))
+	for i, item := range items {
+		ids[i] = item.ID
+		scores[item.ID] = item.Score
+	}
+	// 行已经被删除的成员在这一步丢掉，列表按索引里的顺序恢复
+	rows, err := l.videos.FilterByIDs(ctx, ids)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	ordered := orderVideos(rows, scores)
+	if len(ordered) == 0 {
+		// 这一页索引里的内容全部已经不可见，退回查表把后面还没进索引的内容补上
+		return l.listFollowFeedFromTable(ctx, followingIDs, limit, cursor, lastId, userID)
+	}
+	if uint64(len(ordered)) > limit {
+		ordered = ordered[:limit]
+	}
+	list, err := l.assemble(ctx, ordered, userID)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	if len(list) == 0 {
+		return []VideoItem{}, 0, 0, nil
+	}
+	last := list[len(list)-1]
+	return list, last.CreatedAt.UnixMilli(), last.Id, nil
+}
+
+// listFollowFeedFromTable 索引里没有任何数据时按作者集合查表
+func (l *Logic) listFollowFeedFromTable(ctx context.Context, followingIDs []uint64, limit uint64, cursor time.Time, lastId uint64, userID uint64) ([]VideoItem, int64, uint64, error) {
 	items, err := l.videos.ListByAuthorsBefore(ctx, followingIDs, limit, cursor, lastId)
 	if err != nil {
 		return nil, 0, 0, err
@@ -154,13 +212,106 @@ func (l *Logic) GetFollowFeedVideos(ctx context.Context, limit uint64, lastCreat
 	if len(items) == 0 {
 		return []VideoItem{}, 0, 0, nil
 	}
-
 	list, err := l.assemble(ctx, items, userID)
 	if err != nil {
 		return nil, 0, 0, err
 	}
 	last := list[len(list)-1]
 	return list, last.CreatedAt.UnixMilli(), last.Id, nil
+}
+
+// HandleVideoCreated 视频发布后写关注流索引：大号只写自己的发件箱，
+// 小号按粉丝分批推进每个人的收件箱
+func (l *Logic) HandleVideoCreated(ctx context.Context, payload []byte) error {
+	var created videoevent.CreatedEvent
+	if err := json.Unmarshal(payload, &created); err != nil {
+		return consumer.Permanent(err)
+	}
+	if created.VideoID == 0 || created.AuthorID == 0 {
+		return consumer.Permanent(errors.New("创建视频事件里缺少视频或作者 ID"))
+	}
+	publishedAt := created.CreatedAt
+	if publishedAt.IsZero() {
+		publishedAt = time.Now()
+	}
+	item := feedrepo.InboxItem{
+		VideoID:     created.VideoID,
+		AuthorID:    created.AuthorID,
+		PublishedAt: publishedAt,
+	}
+
+	// 粉丝数取反向集合的基数，集合不存在按大号处理：只写发件箱，避免给大批粉丝写收件箱
+	followers, err := l.follows.CountFollowers(ctx, created.AuthorID)
+	if err != nil && !errors.Is(err, redis.Nil) {
+		slog.Error("统计作者粉丝数失败", "author_id", created.AuthorID, "error", err)
+		return err
+	}
+	if followers == 0 || followers >= bigAuthorFollowers {
+		if err := l.feed.PushOutboxItem(ctx, item); err != nil {
+			slog.Error("写发件箱失败", "author_id", created.AuthorID, "video_id", created.VideoID, "error", err)
+			return err
+		}
+		return nil
+	}
+	return l.fanoutToInboxes(ctx, created.AuthorID, item)
+}
+
+// fanoutToInboxes 用 SSCAN 分批取粉丝，逐批写收件箱。
+// 同一个作者的事件进同一个分区、由一个消费循环串行处理，扇出顺序与发布顺序一致
+func (l *Logic) fanoutToInboxes(ctx context.Context, authorID uint64, item feedrepo.InboxItem) error {
+	cursor := uint64(0)
+	for {
+		followerIDs, next, err := l.follows.FollowerIDsPage(ctx, authorID, cursor, followFanoutBatch)
+		if err != nil {
+			slog.Error("取粉丝列表失败", "author_id", authorID, "error", err)
+			return err
+		}
+		if err = l.feed.PushInboxItems(ctx, followerIDs, item); err != nil {
+			slog.Error("写收件箱失败", "author_id", authorID, "video_id", item.VideoID, "error", err)
+			return err
+		}
+		if next == 0 {
+			return nil
+		}
+		cursor = next
+	}
+}
+
+// HandleFollowSwitched 关注成功后回填被关注者的最近内容，
+// 让关注流立刻有东西可看；取关不需要清理收件箱，读取时会按关注状态过滤
+func (l *Logic) HandleFollowSwitched(ctx context.Context, payload []byte) error {
+	var switched followevent.SwitchedEvent
+	if err := json.Unmarshal(payload, &switched); err != nil {
+		return consumer.Permanent(err)
+	}
+	if switched.Follower == 0 || switched.Following == 0 {
+		return consumer.Permanent(errors.New("关注事件里缺少用户 ID"))
+	}
+	if !switched.Followed {
+		return nil
+	}
+
+	rows, err := l.videos.ListByAuthorsBefore(ctx, []uint64{switched.Following}, followBackfillLimit, time.Time{}, 0)
+	if err != nil {
+		slog.Error("回填关注流失败", "follower", switched.Follower, "following", switched.Following, "error", err)
+		return err
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	items := make([]feedrepo.InboxItem, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, feedrepo.InboxItem{
+			VideoID:     row.ID,
+			AuthorID:    row.AuthorID,
+			PublishedAt: row.CreateTime,
+		})
+	}
+	if err = l.feed.PushInboxItemsForFollower(ctx, switched.Follower, items); err != nil {
+		slog.Error("回填收件箱失败", "follower", switched.Follower, "error", err)
+		return err
+	}
+	return nil
 }
 
 // score 给视频计一次分。事件时间已经超出保留时长的直接丢弃，
