@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"golang.org/x/sync/singleflight"
 
 	favoriteevent "simple_tiktok/internal/modules/favorite/event"
 	favoriterepo "simple_tiktok/internal/modules/favorite/repo"
@@ -34,8 +35,8 @@ import (
 
 const (
 	infoLogicalTTL       = 5 * time.Minute        // 详情记录的新鲜度上界
-	infoRebuildLockTTL   = 10 * time.Second       // 重建互斥锁的持有上限
-	infoRefreshTimeout   = 3 * time.Second        // 后台重建的超时
+	infoMaxStaleSeconds  = int64(20 * 60)         // 旧值最长可用时间，超过它就不再返回旧值，改为等待一次回源
+	infoRefreshTimeout   = 3 * time.Second        // 共享重建的超时
 	infoInvalidateMaxIDs = 2000                   // 资料变更时批量清理缓存的视频数上限
 
 	coverMaxSize = 10 << 20 // 封面最大 10MB
@@ -52,6 +53,10 @@ type Logic struct {
 	producer  *producer.Producer
 	uploader  *upload.Uploader
 	sts       *sts.Service
+
+	// refreshGroup 详情缓存的共享重建：同一个视频在同一时刻只有一次回源，
+	// 其余调用共享它的结果。对外不暴露，只在本模块内使用
+	refreshGroup singleflight.Group
 }
 
 // CreateVideo 创建发布记录，状态为已创建，不发事件。文件由前端直传 OSS。
@@ -505,43 +510,84 @@ func (l *Logic) fillFollowed(ctx context.Context, list []InfoRes, userID uint64)
 	return nil
 }
 
-// getInfoWithCache 读详情缓存：命中返回记录，空值标记返回不存在，键不存在回源
+// getInfoWithCache 读详情缓存：命中返回记录，逻辑过期返回旧值并触发后台共享重建，
+// 空值标记返回不存在，键不存在或者旧值太旧时合并等待一次回源
 func (l *Logic) getInfoWithCache(ctx context.Context, videoID uint64) (InfoRes, bool, error) {
 	record, found, err := l.videos.GetInfoCache(ctx, videoID)
 	if err != nil {
 		return InfoRes{}, false, err
 	}
 	if !found {
-		// 键不存在，没有旧值可以返回，直接回源
-		return l.loadInfoFromDBAndWriteCache(ctx, videoID)
+		// 键不存在，手里没有旧值可以返回，只能等一次合并后的回源
+		return l.loadInfoShared(ctx, videoID)
 	}
 	if record == nil {
 		// 空值标记有效期内直接返回不存在
 		return InfoRes{}, false, nil
 	}
-	if record.ExpireAt <= time.Now().Unix() {
-		// 逻辑过期：本请求返回旧值，重建交给后台
+	now := time.Now().Unix()
+	if record.ExpireAt <= now {
+		if now-record.ExpireAt > infoMaxStaleSeconds {
+			// 旧值已经超出最长可用时间，不再返回它，改为等一次回源
+			return l.loadInfoShared(ctx, videoID)
+		}
+		// 逻辑过期：触发后台共享重建，不等待，继续往下返回手里的旧值
 		l.triggerInfoRefresh(videoID)
 	}
 	return l.fromCacheEntry(*record.Entry), true, nil
 }
 
-// triggerInfoRefresh 后台重建：抢到锁的做，没抢到的直接结束。
-// 锁的获取放进 goroutine，请求路径上连一次 SET NX 都不花
+// triggerInfoRefresh 发起共享重建但不读 channel，所以调用方不等待。
+// 同一个视频已经有重建在跑时，这次调用共享那一次，不会重复回源
 func (l *Logic) triggerInfoRefresh(videoID uint64) {
-	go func() {
-		token, locked, err := l.videos.TryLockRebuild(context.Background(), videoID, infoRebuildLockTTL)
-		if err != nil || !locked {
-			return
-		}
-		defer func() { _ = l.videos.UnlockRebuild(context.Background(), videoID, token) }()
-
+	_ = l.refreshGroup.DoChan(infoGroupKey(videoID), func() (any, error) {
 		refreshCtx, cancel := context.WithTimeout(context.Background(), infoRefreshTimeout)
 		defer cancel()
 		if _, _, err := l.loadInfoFromDBAndWriteCache(refreshCtx, videoID); err != nil {
 			slog.Error("后台刷新视频详情缓存失败", "video_id", videoID, "error", err)
+			return nil, err
 		}
-	}()
+		return nil, nil
+	})
+}
+
+// infoResult 共享重建的返回值
+type infoResult struct {
+	info    InfoRes
+	visible bool
+}
+
+// loadInfoShared 合并并发回源：同一个视频同一时刻只有一次查询，其余调用共享结果。
+// 共享调用用独立 context，调用方断开只放弃等待，那次查询继续跑完并把缓存写好
+func (l *Logic) loadInfoShared(ctx context.Context, videoID uint64) (InfoRes, bool, error) {
+	channel := l.refreshGroup.DoChan(infoGroupKey(videoID), func() (any, error) {
+		refreshCtx, cancel := context.WithTimeout(context.Background(), infoRefreshTimeout)
+		defer cancel()
+		info, visible, err := l.loadInfoFromDBAndWriteCache(refreshCtx, videoID)
+		if err != nil {
+			return nil, err
+		}
+		return infoResult{info: info, visible: visible}, nil
+	})
+
+	select {
+	case result := <-channel:
+		if result.Err != nil {
+			return InfoRes{}, false, result.Err
+		}
+		got, ok := result.Val.(infoResult)
+		if !ok {
+			return InfoRes{}, false, errors.New("详情缓存重建返回了非预期类型")
+		}
+		return got.info, got.visible, nil
+	case <-ctx.Done():
+		return InfoRes{}, false, ctx.Err()
+	}
+}
+
+// infoGroupKey 共享重建的分组键
+func infoGroupKey(videoID uint64) string {
+	return fmt.Sprintf("video:info:%d", videoID)
 }
 
 // loadInfoFromDBAndWriteCache 重建缓存：读视频行写回详情记录。

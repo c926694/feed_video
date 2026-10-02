@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -13,7 +12,6 @@ import (
 
 const (
 	infoCacheKeyFormat = "cache:video:info:%d"
-	infoLockKeyFormat  = "lock:video:info:%d"
 	infoPhysicalTTL    = 24 * time.Hour
 	infoMissTTL        = 2 * time.Minute
 )
@@ -259,32 +257,6 @@ func (r *Repo) DeleteInfoCacheBatch(ctx context.Context, videoIDs []uint64) erro
 	return r.redisClient.Del(ctx, keys...).Err()
 }
 
-// TryLockRebuild 尝试取到重建缓存的锁，返回的 token 用于解锁
-func (r *Repo) TryLockRebuild(ctx context.Context, videoID uint64, ttl time.Duration) (string, bool, error) {
-	token := strconv.FormatInt(time.Now().UnixNano(), 10)
-	locked, err := r.redisClient.SetNX(ctx, infoLockKey(videoID), token, ttl).Result()
-	if err != nil {
-		return "", false, err
-	}
-	return token, locked, nil
-}
-
-// UnlockRebuild 释放重建缓存的锁，只有持有同一个 token 时才真正删除
-func (r *Repo) UnlockRebuild(ctx context.Context, videoID uint64, token string) error {
-	return unlockScript.Run(ctx, r.redisClient, []string{infoLockKey(videoID)}, token).Err()
-}
-
-var unlockScript = redis.NewScript(`
-if redis.call("GET", KEYS[1]) == ARGV[1] then
-    return redis.call("DEL", KEYS[1])
-end
-return 0
-`)
-
 func infoCacheKey(videoID uint64) string {
 	return fmt.Sprintf(infoCacheKeyFormat, videoID)
-}
-
-func infoLockKey(videoID uint64) string {
-	return fmt.Sprintf(infoLockKeyFormat, videoID)
 }
