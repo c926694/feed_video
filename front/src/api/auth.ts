@@ -39,6 +39,16 @@ export async function fetchMe() {
   return normalizeUser(body as RawUser);
 }
 
+// fetchUserProfile 取指定用户的公开资料，看别人的主页时使用
+export async function fetchUserProfile(userId: number): Promise<User> {
+  const { data } = await http.get(`/users/${userId}`);
+  const body = unwrapData<RawUser | { user?: RawUser }>(data);
+  if ("user" in (body as { user?: RawUser })) {
+    return normalizeUser((body as { user?: RawUser }).user);
+  }
+  return normalizeUser(body as RawUser);
+}
+
 export async function updateMyProfile(payload: { nickname?: string; avatar?: File | null }) {
   const formData = new FormData();
   if (payload.nickname && payload.nickname.trim()) {

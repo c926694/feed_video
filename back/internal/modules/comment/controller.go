@@ -44,6 +44,21 @@ func (h *Controller) Delete(c *gin.Context) {
 	httpx.OK(c, nil)
 }
 
+// GetOne 取单条评论，从通知跳转时用它拿到所属视频与楼层
+func (h *Controller) GetOne(c *gin.Context) {
+	commentID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "评论 ID 不合法"))
+		return
+	}
+	info, err := h.Logic.GetOne(c.Request.Context(), commentID, auth.UserID(c))
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	httpx.OK(c, info)
+}
+
 func (h *Controller) List(c *gin.Context) {
 	videoID, err := strconv.ParseUint(c.Param("videoId"), 10, 64)
 	if err != nil {

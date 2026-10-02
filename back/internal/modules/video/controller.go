@@ -87,6 +87,36 @@ func (h *Controller) GetVideoInfo(c *gin.Context) {
 	httpx.OK(c, info)
 }
 
+// ListAuthorVideos 取某个作者的已发布视频，看别人的主页时使用
+func (h *Controller) ListAuthorVideos(c *gin.Context) {
+	authorID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "用户 ID 不合法"))
+		return
+	}
+	lastCreatedAt, err := strconv.ParseInt(c.DefaultQuery("last_created_at", "0"), 10, 64)
+	if err != nil {
+		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "last_created_at 参数不合法"))
+		return
+	}
+	lastID, err := strconv.ParseUint(c.DefaultQuery("last_id", "0"), 10, 64)
+	if err != nil {
+		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "last_id 参数不合法"))
+		return
+	}
+	limit, err := strconv.ParseUint(c.DefaultQuery("limit", "20"), 10, 64)
+	if err != nil {
+		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "limit 参数不合法"))
+		return
+	}
+	res, err := h.Logic.ListAuthorVideos(c.Request.Context(), authorID, lastCreatedAt, lastID, limit, auth.UserID(c))
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	httpx.OK(c, res)
+}
+
 func (h *Controller) GetMyVideos(c *gin.Context) {
 	limit, err := strconv.ParseUint(c.DefaultQuery("limit", "60"), 10, 64)
 	if err != nil {

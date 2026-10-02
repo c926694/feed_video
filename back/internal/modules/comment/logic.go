@@ -217,6 +217,22 @@ func (l *Logic) ListByVideo(ctx context.Context, videoID uint64, lastCreatedAt i
 	return result, nil
 }
 
+// GetOne 取单条评论，供从通知跳转时定位它所在的视频与楼层
+func (l *Logic) GetOne(ctx context.Context, commentID uint64, userID uint64) (*InfoRes, error) {
+	item, err := l.comments.GetByID(ctx, commentID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, httpx.New(httpx.CodeNotFound, "评论不存在")
+		}
+		return nil, err
+	}
+	list := []InfoRes{l.toInfoRes(*item)}
+	if err = l.fillLiked(ctx, list, userID); err != nil {
+		return nil, err
+	}
+	return &list[0], nil
+}
+
 // ListReplies 某个顶级评论下子评论的分页。传子评论 ID 时按它所属的楼处理
 func (l *Logic) ListReplies(ctx context.Context, commentID uint64, lastCreatedAt int64, lastID uint64, limit uint64, userID uint64) (*ListRes, error) {
 	anchor, err := l.comments.GetByID(ctx, commentID)

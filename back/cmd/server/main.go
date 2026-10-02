@@ -20,6 +20,7 @@ import (
 	"simple_tiktok/internal/modules/feed"
 	"simple_tiktok/internal/modules/follow"
 	"simple_tiktok/internal/modules/like"
+	"simple_tiktok/internal/modules/message"
 	"simple_tiktok/internal/modules/user"
 	"simple_tiktok/internal/modules/video"
 	"simple_tiktok/internal/platform/auth"
@@ -128,6 +129,7 @@ func main() {
 		video.RegisterHTTP,
 		comment.RegisterHTTP,
 		feed.RegisterHTTP,
+		message.RegisterHTTP,
 	}
 	for _, register := range httpRegistrations {
 		if _, err = register(r, serviceCtx); err != nil {
@@ -149,6 +151,7 @@ func main() {
 		{feed.Name, feed.RegisterConsumers},
 		{like.Name, like.RegisterConsumers},
 		{favorite.Name, favorite.RegisterConsumers},
+		{message.Name, message.RegisterConsumers},
 	}
 	for _, item := range consumerRegistrations {
 		eventConsumer := consumer.New(cfg.Kafka.Brokers, cfg.Kafka.GroupID, item.subscriber, eventProducer)

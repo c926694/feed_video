@@ -9,6 +9,16 @@
       <span class="nav-label">首页</span>
     </RouterLink>
 
+    <RouterLink class="nav-item" :class="{ active: route.path === '/messages' }" to="/messages">
+      <span class="icon-wrap">
+        <svg viewBox="0 0 24 24" class="nav-svg">
+          <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2Zm8 7L4 6v2l8 5 8-5V6l-8 5Z" fill="currentColor" />
+        </svg>
+        <span v-if="unreadCount > 0" class="nav-badge">{{ badgeText }}</span>
+      </span>
+      <span class="nav-label">消息</span>
+    </RouterLink>
+
     <RouterLink class="nav-item create-item" to="/upload" title="发布视频">
       <div class="tiktok-create-pill" aria-hidden="true">
         <span class="pill-cyan"></span>
@@ -36,9 +46,13 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from "vue";
 import { useRoute } from "vue-router";
+import { useUnreadMessages } from "@/composables/useUnreadMessages";
 
 const route = useRoute();
+const { unreadCount } = useUnreadMessages();
+const badgeText = computed(() => (unreadCount.value > 99 ? "99+" : String(unreadCount.value)));
 </script>
 
 <style scoped>
@@ -49,7 +63,7 @@ const route = useRoute();
   bottom: 0;
   z-index: 80;
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   align-items: center;
   background-color: #000000;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
@@ -71,10 +85,27 @@ const route = useRoute();
 }
 
 .icon-wrap {
+  position: relative;
   width: 22px;
   height: 22px;
   display: grid;
   place-items: center;
+}
+
+.nav-badge {
+  position: absolute;
+  top: -6px;
+  right: -8px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background-color: var(--tiktok-red);
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
 }
 
 .nav-svg {

@@ -58,6 +58,12 @@ export async function fetchReplyList(
   return toCommentPage(unwrapData<unknown>(data));
 }
 
+// fetchComment 取单条评论，从通知跳转时用它拿到所属视频与楼层
+export async function fetchComment(commentId: number): Promise<Comment> {
+  const { data } = await http.get(`/comments/${commentId}`);
+  return normalizeComment(unwrapData<RawComment>(data));
+}
+
 export async function createComment(payload: {
   video_id: number;
   content: string;

@@ -36,6 +36,7 @@ func RegisterHTTP(r *gin.Engine, ctx *svc.ServiceContext) (*gin.Engine, error) {
 		group.DELETE("/logout", controller.Logout)
 		group.GET("/me", ctx.Auth.Middleware(), controller.GetUserInfo)
 		group.POST("/me", ctx.Auth.Middleware(), controller.UpdateProfile)
+		group.GET("/:id", ctx.Auth.Middleware(), controller.GetOne)
 	}
 	return r, nil
 }

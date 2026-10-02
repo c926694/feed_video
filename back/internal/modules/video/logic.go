@@ -315,6 +315,52 @@ func (l *Logic) GetMyVideos(ctx context.Context, userID uint64, limit uint64) ([
 	return list, nil
 }
 
+// ListAuthorVideos 取指定作者的已发布视频，双字段游标分页，
+// 同时补上当前登录用户对每条视频的点赞、收藏与关注状态
+func (l *Logic) ListAuthorVideos(ctx context.Context, authorID uint64, lastCreatedAt int64, lastID uint64, limit uint64, userID uint64) (*AuthorVideosRes, error) {
+	if limit == 0 {
+		limit = 20
+	}
+	if limit > 60 {
+		limit = 60
+	}
+	var cursor time.Time
+	if lastID > 0 {
+		cursor = time.UnixMilli(lastCreatedAt)
+	}
+
+	items, err := l.videos.ListByAuthorsBefore(ctx, []uint64{authorID}, limit+1, cursor, lastID)
+	if err != nil {
+		return nil, err
+	}
+	hasMore := uint64(len(items)) > limit
+	if hasMore {
+		items = items[:limit]
+	}
+
+	list := make([]InfoRes, 0, len(items))
+	for i := range items {
+		list = append(list, l.toInfoRes(items[i]))
+	}
+	if err = l.fillLiked(ctx, list, userID); err != nil {
+		return nil, err
+	}
+	if err = l.fillFavorited(ctx, list, userID); err != nil {
+		return nil, err
+	}
+	if err = l.fillFollowed(ctx, list, userID); err != nil {
+		return nil, err
+	}
+
+	result := &AuthorVideosRes{List: list, HasMore: hasMore}
+	if len(items) > 0 {
+		last := items[len(items)-1]
+		result.LastCreatedAt = last.CreateTime.UnixMilli()
+		result.LastId = last.ID
+	}
+	return result, nil
+}
+
 func (l *Logic) GetVideoInfo(ctx context.Context, videoID uint64, userID uint64) (InfoRes, error) {
 	info, exists, err := l.getInfoWithCache(ctx, videoID)
 	if err != nil {

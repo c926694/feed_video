@@ -29,6 +29,16 @@
           <span class="rail-text">关注</span>
         </RouterLink>
 
+        <RouterLink class="rail-link" to="/messages">
+          <span class="rail-icon">
+            <svg viewBox="0 0 24 24" class="svg-icon">
+              <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2Zm8 7L4 6v2l8 5 8-5V6l-8 5Z" fill="currentColor" />
+            </svg>
+            <span v-if="unreadCount > 0" class="rail-badge">{{ badgeText }}</span>
+          </span>
+          <span class="rail-text">消息</span>
+        </RouterLink>
+
         <RouterLink class="rail-link" to="/upload">
           <span class="rail-icon">
             <svg viewBox="0 0 24 24" class="svg-icon">
@@ -88,9 +98,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import HotRankBoard from "@/components/feed/HotRankBoard.vue";
 import VideoFeed from "@/components/feed/VideoFeed.vue";
+import { useUnreadMessages } from "@/composables/useUnreadMessages";
 import type { Video } from "@/types/domain";
 
 const tab = ref<"recommend" | "follow" | "hot">("recommend");
@@ -98,6 +109,9 @@ const hotPlayMode = ref(false);
 const hasLoadedHot = ref(false);
 const hotSeedVideos = ref<Video[]>([]);
 const hotSeedVideoId = ref(0);
+
+const { unreadCount } = useUnreadMessages();
+const badgeText = computed(() => (unreadCount.value > 99 ? "99+" : String(unreadCount.value)));
 
 function changeTab(nextTab: "recommend" | "follow" | "hot") {
   tab.value = nextTab;
@@ -221,11 +235,28 @@ watch(
 }
 
 .rail-icon {
+  position: relative;
   width: 22px;
   height: 22px;
   display: grid;
   place-items: center;
   flex-shrink: 0;
+}
+
+.rail-badge {
+  position: absolute;
+  top: -6px;
+  right: -8px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background-color: var(--tiktok-red);
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
 }
 
 .svg-icon {

@@ -59,3 +59,11 @@ type InfoRes struct {
 	Status        string    `json:"status"`
 	CreatedAt     time.Time `json:"created_at"`
 }
+
+// AuthorVideosRes 某个作者的已发布视频，带双字段游标
+type AuthorVideosRes struct {
+	List          []InfoRes `json:"list"`
+	LastCreatedAt int64     `json:"last_created_at"`
+	LastId        uint64    `json:"last_id"`
+	HasMore       bool      `json:"has_more"`
+}

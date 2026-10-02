@@ -8,7 +8,7 @@
         </header>
 
         <ul class="list">
-          <li v-for="item in comments" :key="item.id">
+          <li v-for="item in comments" :key="item.id" :data-comment-id="item.id" :class="{ focused: item.id === highlightId }">
             <div class="author-row">
               <img v-if="item.author.avatar" :src="item.author.avatar" alt="avatar" />
               <span>{{ item.author.username || item.author.nickname }}</span>
@@ -28,7 +28,12 @@
 
             <template v-if="replyState(item.id)?.open">
               <ul class="replies">
-                <li v-for="reply in replyState(item.id)?.replies" :key="reply.id">
+                <li
+                  v-for="reply in replyState(item.id)?.replies"
+                  :key="reply.id"
+                  :data-comment-id="reply.id"
+                  :class="{ focused: reply.id === highlightId }"
+                >
                   <span class="reply-author">
                     <img v-if="reply.author.avatar" :src="reply.author.avatar" alt="avatar" />
                     {{ reply.author.username || reply.author.nickname }}
@@ -78,14 +83,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from "vue";
-import { createComment, deleteComment, fetchCommentList, fetchMe, fetchReplyList, setCommentLike } from "@/api";
+import { nextTick, ref, watch } from "vue";
+import { createComment, deleteComment, fetchComment, fetchCommentList, fetchMe, fetchReplyList, setCommentLike } from "@/api";
 import type { Comment } from "@/types/domain";
 import { useToast } from "@/composables/useToast";
 
 const props = defineProps<{
   open: boolean;
   videoId: number;
+  // focusCommentId 从通知跳转过来时要定位到的那条评论
+  focusCommentId?: number;
 }>();
 
 defineEmits<{
@@ -101,6 +108,8 @@ const cursor = ref<{ lastCreatedAt: number; lastId: number } | null>(null);
 const hasMore = ref(false);
 const replyTarget = ref<{ id: number; replyToId: number; name: string } | null>(null);
 const currentUserId = ref<number | null>(null);
+// 定位到的那条评论，用于滚动与高亮
+const highlightId = ref(0);
 
 // 每个顶级评论的展开状态：首次展开 3 条，之后每次追加 10 条
 interface ReplyState {
@@ -125,16 +134,86 @@ async function loadFirstPage() {
   replyStates.value = {};
 }
 
+// 定位某条评论。分页游标对 id 是"小于"，所以把目标的 id 加一传给接口，
+// 目标自己就会被包含进这一页的第一条
+function cursorBefore(comment: Comment) {
+  const createdAt = new Date(comment.createdAt).getTime();
+  return { lastCreatedAt: Number.isFinite(createdAt) ? createdAt : 0, lastId: comment.id + 1 };
+}
+
+async function locateComment(commentId: number) {
+  highlightId.value = 0;
+  let target: Comment;
+  try {
+    target = await fetchComment(commentId);
+  } catch {
+    await loadFirstPage();
+    showToast("这条评论已经不存在");
+    return;
+  }
+
+  if (target.parentId === 0) {    const page = await fetchCommentList(props.videoId, cursorBefore(target));
+    comments.value = page.comments;
+    cursor.value = page.lastId ? { lastCreatedAt: page.lastCreatedAt, lastId: page.lastId } : null;
+    hasMore.value = page.hasMore;
+    replyStates.value = {};
+    await reveal(commentId);
+    return;
+  }
+
+  // 回复：先把父评论取出来放进列表，再展开这个楼并把目标那条回复放在最前
+  let parent: Comment;
+  try {
+    parent = await fetchComment(target.parentId);
+  } catch {
+    await loadFirstPage();
+    showToast("这条评论已经不存在");
+    return;
+  }
+  const page = await fetchCommentList(props.videoId, cursorBefore(parent));
+  comments.value = page.comments;
+  cursor.value = page.lastId ? { lastCreatedAt: page.lastCreatedAt, lastId: page.lastId } : null;
+  hasMore.value = page.hasMore;
+
+  const replies = await fetchReplyList(parent.id, { limit: firstExpandSize, cursor: cursorBefore(target) });
+  replyStates.value = {
+    [parent.id]: {
+      open: true,
+      replies: replies.comments,
+      cursor: replies.lastId ? { lastCreatedAt: replies.lastCreatedAt, lastId: replies.lastId } : null,
+      hasMore: replies.hasMore
+    }
+  };
+  await reveal(commentId);
+}
+
+// reveal 把定位到的那条滚动到可见位置并高亮，几秒后取消高亮
+async function reveal(commentId: number) {
+  highlightId.value = commentId;
+  await nextTick();
+  const node = document.querySelector(`[data-comment-id="${commentId}"]`);
+  node?.scrollIntoView({ block: "center" });
+  window.setTimeout(() => {
+    if (highlightId.value === commentId) {
+      highlightId.value = 0;
+    }
+  }, 3000);
+}
+
 watch(
-  () => props.open,
-  async (isOpen) => {
-    if (!isOpen || !props.videoId) return;
+  () => [props.open, props.videoId, props.focusCommentId ?? 0] as const,
+  async ([isOpen, videoId]) => {
+    if (!isOpen || !videoId) return;
     replyTarget.value = null;
     try {
       const me = await fetchMe();
       currentUserId.value = me.id;
     } catch {
       currentUserId.value = null;
+    }
+    if (props.focusCommentId) {
+      await locateComment(props.focusCommentId);
+      return;
     }
     await loadFirstPage();
   },
@@ -364,6 +443,14 @@ h4 {
 li {
   padding: 14px 0;
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* 从通知跳转定位到的那条评论 */
+li.focused {
+  background-color: rgba(254, 44, 85, 0.12);
+  border-left: 3px solid var(--tiktok-red);
+  border-radius: 6px;
+  padding-left: 10px;
 }
 
 .author-row {

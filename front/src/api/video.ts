@@ -45,6 +45,30 @@ export async function fetchFeedVideos(params: FeedParams = {}) {
   return fetchFeedByPath("/videos/feed", params);
 }
 
+// fetchAuthorVideos 取指定作者的已发布视频，看别人的主页时使用
+export async function fetchAuthorVideos(authorId: number, params: FeedParams = {}) {
+  const { data } = await http.get(`/videos/author/${authorId}`, {
+    params: {
+      ...(params.limit ? { limit: params.limit } : {}),
+      ...(params.lastId ? { last_created_at: params.lastCreatedAt, last_id: params.lastId } : {})
+    }
+  });
+  const body = unwrapData<unknown>(data);
+  const payload = typeof body === "object" && body ? (body as Record<string, unknown>) : {};
+  return {
+    videos: pickVideoList(body).map(normalizeVideo),
+    lastCreatedAt: Number(payload.last_created_at ?? 0),
+    lastId: Number(payload.last_id ?? 0),
+    hasMore: Boolean(payload.has_more)
+  };
+}
+
+// fetchVideoDetail 取单条视频，含当前登录用户的点赞、收藏与关注状态
+export async function fetchVideoDetail(videoId: number): Promise<Video> {
+  const { data } = await http.get(`/videos/${videoId}`);
+  return normalizeVideo(unwrapData<unknown>(data));
+}
+
 export async function fetchHotVideos(params: HotFeedParams = {}) {
   const { limit = 5, offset = 0, interval = 60 } = params;
   const { data } = await http.get("/videos/feed/hot", {

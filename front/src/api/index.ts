@@ -3,5 +3,6 @@ export * from "./comment";
 export * from "./favorite";
 export * from "./follow";
 export * from "./like";
+export * from "./message";
 export * from "./video";
 export * from "./videoList";

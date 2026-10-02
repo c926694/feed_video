@@ -40,6 +40,35 @@ export interface VideoPage {
   hasMore: boolean;
 }
 
+// MessageActor 通知的触发者
+export interface MessageActor {
+  id: number;
+  nickname: string;
+  avatar: string;
+}
+
+// MessageItem 通知列表里的一条会话
+export interface MessageItem {
+  id: number;
+  type: string;
+  title: string;
+  content: string;
+  actors: MessageActor[];
+  actorCount: number;
+  videoId: number;
+  commentId: number;
+  coverUrl: string;
+  isRead: boolean;
+  createdAt: string;
+}
+
+// MessagePage 通知列表分页结果
+export interface MessagePage {
+  messages: MessageItem[];
+  lastCreatedAt: number;
+  lastId: number;
+}
+
 export interface Comment {
   id: number;
   content: string;

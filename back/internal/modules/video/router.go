@@ -42,6 +42,7 @@ func RegisterHTTP(r *gin.Engine, ctx *svc.ServiceContext) (*gin.Engine, error) {
 		group.PUT("/:id", ctx.Auth.Middleware(), controller.UpdateStatus)
 		group.DELETE("/:id", ctx.Auth.Middleware(), controller.DeleteVideos)
 		group.GET("/me", ctx.Auth.Middleware(), controller.GetMyVideos)
+		group.GET("/author/:id", ctx.Auth.Middleware(), controller.ListAuthorVideos)
 		group.GET("/:id", ctx.Auth.Middleware(), controller.GetVideoInfo)
 	}
 	return r, nil

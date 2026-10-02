@@ -2,6 +2,7 @@ package user
 
 import (
 	"mime/multipart"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 
@@ -62,6 +63,21 @@ func (h *Controller) Refresh(c *gin.Context) {
 
 func (h *Controller) GetUserInfo(c *gin.Context) {
 	info, err := h.Logic.GetInfo(c.Request.Context(), auth.UserID(c))
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	httpx.OK(c, info)
+}
+
+// GetOne 取指定用户的公开资料，看别人的主页时使用
+func (h *Controller) GetOne(c *gin.Context) {
+	userID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "用户 ID 不合法"))
+		return
+	}
+	info, err := h.Logic.GetInfo(c.Request.Context(), userID)
 	if err != nil {
 		httpx.Fail(c, err)
 		return

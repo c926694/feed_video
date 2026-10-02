@@ -37,11 +37,12 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
-import { fetchFeedVideos, fetchFollowVideos, fetchHotVideos, setFollow, setVideoFavorite, setVideoLike } from "@/api";
+import { fetchFeedVideos, fetchFollowVideos, fetchHotVideos } from "@/api";
 import CommentDrawer from "@/components/feed/CommentDrawer.vue";
 import VideoCard from "@/components/feed/VideoCard.vue";
 import type { Video } from "@/types/domain";
 import { useToast } from "@/composables/useToast";
+import { useVideoActions } from "@/composables/useVideoActions";
 import { dedupeById } from "@/utils/collections";
 
 const { showToast } = useToast();
@@ -77,6 +78,20 @@ const activeIndex = ref(0);
 
 const commentOpen = ref(false);
 const commentVideoId = ref(0);
+
+// 点赞、收藏、关注三个动作共用一份实现，三个列表一起写回。
+// 关注变化后关注流的内容会变，所以重新拉一次
+const actions = useVideoActions(
+  () => [recommendVideos.value, followVideos.value, hotVideos.value],
+  async (action) => {
+    if (action !== "follow") return;
+    followCursor.value = null;
+    followVideos.value = [];
+    if (props.tab === "follow") {
+      await loadFollowInitial();
+    }
+  }
+);
 
 const displayVideos = computed(() => {
   if (props.tab === "recommend") return recommendVideos.value;
@@ -173,8 +188,7 @@ function upsertVideosKeepOrder(base: Video[], incoming: Video[]) {
   return result;
 }
 
-function scrollToIndex(index: number) {
-  const node = containerRef.value;
+function scrollToIndex(index: number) {  const node = containerRef.value;
   if (!node) return;
   node.scrollTo({
     top: index * node.clientHeight,
@@ -276,77 +290,15 @@ async function loadMore() {
 }
 
 async function toggleLike(videoId: number) {
-  const current =
-    recommendVideos.value.find((item) => item.id === videoId) ??
-    followVideos.value.find((item) => item.id === videoId) ??
-    hotVideos.value.find((item) => item.id === videoId);
-  if (!current) return;
-  const targetLiked = await setVideoLike(videoId, !current.liked);
-  const patch = (videos: Video[]) =>
-    videos.map((item) => {
-      if (item.id !== videoId) return item;
-      const liked = targetLiked;
-      const delta = (liked ? 1 : 0) - (item.liked ? 1 : 0);
-      return {
-        ...item,
-        liked,
-        likeCount: Math.max(0, item.likeCount + delta)
-      };
-    });
-  recommendVideos.value = patch(recommendVideos.value);
-  followVideos.value = patch(followVideos.value);
-  hotVideos.value = patch(hotVideos.value);
+  await actions.toggleLike(videoId);
 }
 
 async function toggleFavorite(videoId: number) {
-  const current =
-    recommendVideos.value.find((item) => item.id === videoId) ??
-    followVideos.value.find((item) => item.id === videoId) ??
-    hotVideos.value.find((item) => item.id === videoId);
-  if (!current) return;
-  const targetFavorited = await setVideoFavorite(videoId, !current.favorited);
-  const patch = (videos: Video[]) =>
-    videos.map((item) => {
-      if (item.id !== videoId) return item;
-      const favorited = targetFavorited;
-      const delta = (favorited ? 1 : 0) - (item.favorited ? 1 : 0);
-      return {
-        ...item,
-        favorited,
-        favoriteCount: Math.max(0, item.favoriteCount + delta)
-      };
-    });
-  recommendVideos.value = patch(recommendVideos.value);
-  followVideos.value = patch(followVideos.value);
-  hotVideos.value = patch(hotVideos.value);
+  await actions.toggleFavorite(videoId);
 }
 
 async function toggleFollow(userId: number) {
-  if (!userId) return;
-  const current =
-    recommendVideos.value.find((item) => item.author.id === userId) ??
-    followVideos.value.find((item) => item.author.id === userId) ??
-    hotVideos.value.find((item) => item.author.id === userId);
-  if (!current) return;
-  const targetFollowed = await setFollow(userId, !current.followed);
-  const patchFollow = (videos: Video[]) =>
-    videos.map((item) =>
-      item.author.id === userId
-        ? {
-            ...item,
-            followed: targetFollowed
-          }
-        : item
-    );
-  recommendVideos.value = patchFollow(recommendVideos.value);
-  followVideos.value = patchFollow(followVideos.value);
-  hotVideos.value = patchFollow(hotVideos.value);
-
-  followCursor.value = null;
-  followVideos.value = [];
-  if (props.tab === "follow") {
-    await loadFollowInitial();
-  }
+  await actions.toggleFollow(userId);
 }
 
 async function loadFollowInitial() {
