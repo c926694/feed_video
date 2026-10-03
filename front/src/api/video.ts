@@ -154,9 +154,10 @@ export async function createVideo(payload: { title: string; description: string;
   }
 }
 
-// 更新发布状态：published 发布完成、failed 标记失败、created 重试。
+// updateVideoStatus：published 发布完成、failed 标记失败、created 重试，
+// private 设为私密，published 用在私密视频上表示取消私密。
 // created 时返回该视频的存储路径与新凭证，其余返回 null。
-export async function updateVideoStatus(videoId: number, status: "published" | "failed" | "created"): Promise<UploadCredential | null> {
+export async function updateVideoStatus(videoId: number, status: "published" | "failed" | "created" | "private"): Promise<UploadCredential | null> {
   const { data } = await http.put(`/videos/${videoId}`, { status });
   const body = unwrapData<unknown>(data);
   if (!body) return null;
@@ -165,6 +166,11 @@ export async function updateVideoStatus(videoId: number, status: "published" | "
 
 export async function deleteVideo(videoId: number) {
   await http.delete(`/videos/${videoId}`);
+}
+
+// setVideoPrivate 设置视频是否只对自己可见：隐藏发 private，取消隐藏发 published
+export async function setVideoPrivate(videoId: number, isPrivate: boolean) {
+  await updateVideoStatus(videoId, isPrivate ? "private" : "published");
 }
 
 export function filterVideosByUser(videos: Video[], userId: number) {

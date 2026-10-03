@@ -19,8 +19,9 @@ const (
 // 视频发布状态
 const (
 	StatusCreated   = "created"   // 已创建，文件上传中
-	StatusPublished = "published" // 已发布
+	StatusPublished = "published" // 已发布，公开可见
 	StatusFailed    = "failed"    // 上传失败
+	StatusPrivate   = "private"   // 已发布后设为私密，只有作者可见
 )
 
 // Video video 表

@@ -5,6 +5,7 @@
         <RouterLink v-if="!isPending(video)" class="item" :to="videoLink(video)">
           <img v-if="video.coverUrl" :src="video.coverUrl" :alt="video.title" />
           <div v-else class="fallback">暂无封面</div>
+          <span v-if="video.status === 'private'" class="private-badge">私密</span>
           <footer>
             <strong>{{ video.title }}</strong>
             <small>点赞 {{ video.likeCount }} · 评论 {{ video.commentCount }}</small>
@@ -55,8 +56,9 @@ const emit = defineEmits<{
 
 const { tasks } = useUploadQueue();
 
+// 私密视频不是上传中的视频，这里只有已创建与上传失败两种状态算未完成
 function isPending(video: Video) {
-  return props.manage && video.status !== "published";
+  return props.manage && (video.status === "created" || video.status === "failed");
 }
 
 function videoLink(video: Video) {
@@ -115,6 +117,19 @@ async function onRetry(videoId: number) {
   text-decoration: none;
   color: inherit;
   display: block;
+}
+
+/* 只有作者自己可见的视频，在封面上标出来 */
+.private-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background-color: rgba(0, 0, 0, 0.66);
+  color: #ffffff;
+  font-size: 11px;
+  line-height: 16px;
 }
 
 img,

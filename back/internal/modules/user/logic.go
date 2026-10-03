@@ -202,6 +202,19 @@ func (l *Logic) HandleVideoDeleted(ctx context.Context, payload []byte) error {
 	return l.syncVideoCount(ctx, deleted.AuthorID)
 }
 
+// HandleVideoPrivateSwitched 订阅视频公开与私密切换事件。
+// 视频数按公开口径统计，所以两种方向的切换都要重新对账，属于重算这一类
+func (l *Logic) HandleVideoPrivateSwitched(ctx context.Context, payload []byte) error {
+	var switched videoevent.PrivateSwitchedEvent
+	if err := json.Unmarshal(payload, &switched); err != nil {
+		return consumer.Permanent(err)
+	}
+	if switched.AuthorID == 0 {
+		return consumer.Permanent(errors.New("视频私密切换事件里没有 authorId"))
+	}
+	return l.syncVideoCount(ctx, switched.AuthorID)
+}
+
 // syncVideoCount 按视频表实际行数对账用户视频数
 func (l *Logic) syncVideoCount(ctx context.Context, userID uint64) error {
 	count, err := l.videos.CountByAuthor(ctx, userID)

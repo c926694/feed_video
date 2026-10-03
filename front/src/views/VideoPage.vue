@@ -10,12 +10,16 @@
         :in-window="true"
         :framed="true"
         :show-follow="!isMyVideo"
+        :show-private="isMyVideo"
         @toggle-like="toggleLike(video.id)"
         @toggle-favorite="toggleFavorite(video.id)"
         @toggle-follow="toggleFollow(video.author.id)"
         @open-comment="openComment"
         @share="shareVideo(video)"
+        @toggle-private="togglePrivate"
       />
+
+      <p v-if="video && isMyVideo && video.status === 'private'" class="private-hint">仅自己可见</p>
 
       <p v-else-if="loading" class="state-text">加载中...</p>
       <p v-else class="state-text">视频不存在或已下架</p>
@@ -33,7 +37,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { fetchMe, fetchVideoDetail } from "@/api";
+import { fetchMe, fetchVideoDetail, setVideoPrivate } from "@/api";
 import CommentDrawer from "@/components/feed/CommentDrawer.vue";
 import VideoCard from "@/components/feed/VideoCard.vue";
 import { useToast } from "@/composables/useToast";
@@ -62,6 +66,20 @@ function openComment() {
 function shareVideo(item: Video) {
   navigator.clipboard.writeText(item.playUrl).catch(() => undefined);
   showToast("已复制视频链接");
+}
+
+// togglePrivate 在自己的视频上切换公开与私密
+async function togglePrivate() {
+  const current = videos.value[0];
+  if (!current) return;
+  const isPrivate = current.status === "private";
+  try {
+    await setVideoPrivate(current.id, !isPrivate);
+    videos.value = [{ ...current, status: isPrivate ? "published" : "private" }];
+    showToast(isPrivate ? "已恢复公开" : "已设为私密，只有你自己能看");
+  } catch {
+    // 错误提示已由 http 拦截器统一弹出
+  }
 }
 
 function goBack() {
@@ -144,5 +162,19 @@ watch(
 .state-text {
   color: rgba(255, 255, 255, 0.6);
   font-size: 14px;
+}
+
+/* 自己的私密视频，提示其他人看不到 */
+.private-hint {
+  position: fixed;
+  top: 18px;
+  left: 64px;
+  z-index: 40;
+  margin: 0;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background-color: rgba(0, 0, 0, 0.5);
+  color: #ffffff;
+  font-size: 12px;
 }
 </style>

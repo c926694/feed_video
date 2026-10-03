@@ -56,6 +56,27 @@
       <small class="count-label">分享</small>
     </button>
 
+    <button
+      v-if="showPrivate"
+      class="action-btn private-btn"
+      :class="{ active: video.status === 'private' }"
+      @click="$emit('toggle-private')"
+    >
+      <span class="icon-bubble" aria-hidden="true">
+        <svg viewBox="0 0 24 24" class="action-svg">
+          <path
+            v-if="video.status === 'private'"
+            d="M12 2a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5zm-3 8V7a3 3 0 0 1 6 0v3H9z"
+          />
+          <path
+            v-else
+            d="M12 2a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3H9V7a3 3 0 0 1 3-3z"
+          />
+        </svg>
+      </span>
+      <small class="count-label">{{ video.status === "private" ? "取消私密" : "设为私密" }}</small>
+    </button>
+
     <button v-if="showDelete" class="action-btn danger-btn" @click="$emit('delete-video')">
       <span class="icon-bubble" aria-hidden="true">
         <svg viewBox="0 0 24 24" class="action-svg">
@@ -84,10 +105,13 @@ withDefaults(
     video: Video;
     showFollow?: boolean;
     showDelete?: boolean;
+    // showPrivate 为 true 时显示设为私密与取消私密，只在自己的作品里出现
+    showPrivate?: boolean;
   }>(),
   {
     showFollow: true,
-    showDelete: false
+    showDelete: false,
+    showPrivate: false
   }
 );
 
@@ -98,6 +122,7 @@ defineEmits<{
   (e: "toggle-follow"): void;
   (e: "share"): void;
   (e: "delete-video"): void;
+  (e: "toggle-private"): void;
 }>();
 </script>
 

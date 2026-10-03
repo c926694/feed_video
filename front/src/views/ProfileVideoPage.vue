@@ -12,12 +12,14 @@
         :framed="true"
         :show-follow="source !== 'works'"
         :show-delete="source === 'works'"
+        :show-private="source === 'works'"
         @toggle-like="toggleLike(video.id)"
         @toggle-favorite="toggleFavorite(video.id)"
         @toggle-follow="toggleFollow(video.id)"
         @open-comment="openComment(video.id)"
         @share="shareVideo(video)"
         @delete-video="onDeleteVideo(video.id)"
+        @toggle-private="onTogglePrivate(video)"
       />
 
       <div v-if="loading" class="loading">加载中...</div>
@@ -48,7 +50,8 @@ import {
   fetchMyVideos,
   setFollow,
   setVideoFavorite,
-  setVideoLike
+  setVideoLike,
+  setVideoPrivate
 } from "@/api";
 import CommentDrawer from "@/components/feed/CommentDrawer.vue";
 import VideoCard from "@/components/feed/VideoCard.vue";
@@ -173,6 +176,20 @@ async function toggleFollow(videoId: number) {
       followed: targetFollowed
     };
   });
+}
+
+// onTogglePrivate 在公开与私密之间切换自己的作品，切换成功后改写本地状态
+async function onTogglePrivate(video: Video) {
+  const isPrivate = video.status === "private";
+  try {
+    await setVideoPrivate(video.id, !isPrivate);
+    videos.value = videos.value.map((item) =>
+      item.id === video.id ? { ...item, status: isPrivate ? "published" : "private" } : item
+    );
+    showToast(isPrivate ? "已恢复公开" : "已设为私密，只有你自己能看");
+  } catch {
+    // 错误提示已由 http 拦截器统一弹出
+  }
 }
 
 async function onDeleteVideo(videoId: number) {

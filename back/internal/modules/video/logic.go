@@ -151,14 +151,25 @@ func (l *Logic) buildCredential(ctx context.Context, coverKey string, playKey st
 	}, nil
 }
 
-// UpdateStatus 更新发布状态：published 发布完成、failed 标记失败、created 重试
+// UpdateStatus 更新发布状态：published 发布完成或取消私密、failed 标记失败、created 重试、
+// private 设为私密。private 只能从 published 迁移过来
 func (l *Logic) UpdateStatus(ctx context.Context, videoID uint64, userID uint64, status string) (*CredentialRes, error) {
 	switch status {
 	case videorepo.StatusPublished:
-		if err := l.publish(ctx, videoID, userID); err != nil {
+		// 同一个目标状态在两种来源下含义不同：created 是首次发布，private 是取消私密
+		item, err := l.getOwnVideo(ctx, videoID, userID, "只能发布自己的视频")
+		if err != nil {
+			return nil, err
+		}
+		if item.Status == videorepo.StatusPrivate {
+			return nil, l.switchPrivate(ctx, videoID, userID, false)
+		}
+		if err = l.publish(ctx, videoID, userID); err != nil {
 			return nil, err
 		}
 		return nil, nil
+	case videorepo.StatusPrivate:
+		return nil, l.switchPrivate(ctx, videoID, userID, true)
 	case videorepo.StatusFailed:
 		if _, _, err := l.transitionStatus(ctx, videoID, userID, videorepo.StatusCreated, videorepo.StatusFailed); err != nil {
 			return nil, err
@@ -176,6 +187,44 @@ func (l *Logic) UpdateStatus(ctx context.Context, videoID uint64, userID uint64,
 	default:
 		return nil, httpx.New(httpx.CodeBadRequest, "状态取值不合法")
 	}
+}
+
+// switchPrivate 在 published 与 private 之间迁移，迁移成功后删详情缓存并发事件。
+// 重复请求同一目标态时条件更新影响 0 行，按幂等返回成功
+func (l *Logic) switchPrivate(ctx context.Context, videoID uint64, userID uint64, toPrivate bool) error {
+	from := videorepo.StatusPublished
+	to := videorepo.StatusPrivate
+	if !toPrivate {
+		from, to = videorepo.StatusPrivate, videorepo.StatusPublished
+	}
+
+	item, migrated, err := l.transitionStatus(ctx, videoID, userID, from, to)
+	if err != nil {
+		return err
+	}
+	if !migrated {
+		// 已经是目标状态，或者当前状态不允许这次迁移
+		current, getErr := l.videos.GetByID(ctx, videoID)
+		if getErr != nil {
+			return getErr
+		}
+		if current.Status == to {
+			return nil
+		}
+		if toPrivate {
+			return httpx.New(httpx.CodeBadRequest, "只有已发布的视频可以设为私密")
+		}
+		return httpx.New(httpx.CodeBadRequest, "这条视频当前不是私密状态")
+	}
+
+	if err = l.producer.Publish(ctx, topic.VideoPrivateSwitched, strconv.FormatUint(videoID, 10), videoevent.PrivateSwitchedEvent{
+		VideoID:   item.ID,
+		AuthorID:  item.AuthorID,
+		IsPrivate: toPrivate,
+	}); err != nil {
+		slog.Error("发布视频私密切换事件失败", "video_id", videoID, "is_private", toPrivate, "error", err)
+	}
+	return nil
 }
 
 // publish 发布完成：校验对象存在与大小，把 created 迁移到 published 并发出事件
@@ -361,16 +410,17 @@ func (l *Logic) ListAuthorVideos(ctx context.Context, authorID uint64, lastCreat
 	return result, nil
 }
 
+// GetVideoInfo 详情：公开的视频所有人可见，私密视频只有作者可见
 func (l *Logic) GetVideoInfo(ctx context.Context, videoID uint64, userID uint64) (InfoRes, error) {
-	info, exists, err := l.getInfoWithCache(ctx, videoID)
+	info, visible, err := l.getInfoWithCache(ctx, videoID)
 	if err != nil {
 		return InfoRes{}, err
 	}
-	if !exists {
-		return InfoRes{}, httpx.New(httpx.CodeNotFound, "视频不存在")
-	}
-	if info.Status != videorepo.StatusPublished {
-		return InfoRes{}, httpx.New(httpx.CodeNotFound, "视频不存在")
+	if !visible {
+		// 私密的行不进缓存，只有作者能拿到它；行不存在时 info 是空的
+		if info.Id == 0 || info.AuthorID != userID {
+			return InfoRes{}, httpx.New(httpx.CodeNotFound, "视频不存在")
+		}
 	}
 
 	list := []InfoRes{info}
@@ -407,7 +457,8 @@ func (l *Logic) DeleteVideo(ctx context.Context, videoID uint64, userID uint64) 
 		return err
 	}
 
-	if item.Status != videorepo.StatusPublished {
+	// 发布过的视频（含已设为私密的）走事件，订阅方各自清理对象、评论、点赞、热度与索引
+	if item.Status == videorepo.StatusCreated || item.Status == videorepo.StatusFailed {
 		// 未发布过：没有事件订阅方需要清理，同步清掉可能已上传的对象
 		if deleteErr := l.uploader.Delete(upload.Video, item.PlayURL); deleteErr != nil {
 			slog.Error("清理视频文件失败", "video_id", videoID, "error", deleteErr)
@@ -418,7 +469,6 @@ func (l *Logic) DeleteVideo(ctx context.Context, videoID uint64, userID uint64) 
 		return nil
 	}
 
-	// 已发布：发事件，订阅方各自清理对象、评论、点赞、热度
 	return l.producer.Publish(ctx, topic.VideoDeleted, strconv.FormatUint(videoID, 10), videoevent.DeletedEvent{
 		VideoID:  videoID,
 		AuthorID: item.AuthorID,
@@ -648,6 +698,10 @@ func (l *Logic) loadInfoFromDBAndWriteCache(ctx context.Context, videoID uint64)
 			return InfoRes{}, false, nil
 		}
 		return InfoRes{}, false, err
+	}
+	if item.Status == videorepo.StatusPrivate {
+		// 私密的行不进缓存，只把行本身返回给上层，由上层按作者判断可见性
+		return l.toInfoRes(*item), false, nil
 	}
 	if item.Status != videorepo.StatusPublished {
 		// 未发布的不进缓存，只返回不可见

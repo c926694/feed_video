@@ -44,12 +44,14 @@
       :video="video"
       :show-follow="showFollow"
       :show-delete="showDelete"
+      :show-private="showPrivate"
       @toggle-like="$emit('toggle-like')"
       @toggle-favorite="$emit('toggle-favorite')"
       @comment="$emit('open-comment')"
       @toggle-follow="$emit('toggle-follow')"
       @share="$emit('share')"
       @delete-video="$emit('delete-video')"
+      @toggle-private="$emit('toggle-private')"
     />
 
     <div class="info-overlay">
@@ -109,12 +111,14 @@ const props = withDefaults(
     active: boolean;
     showFollow?: boolean;
     showDelete?: boolean;
+    showPrivate?: boolean;
     framed?: boolean;
     inWindow?: boolean;
   }>(),
   {
     showFollow: true,
     showDelete: false,
+    showPrivate: false,
     framed: false,
     inWindow: true
   }
@@ -127,6 +131,7 @@ defineEmits<{
   (e: "open-comment"): void;
   (e: "share"): void;
   (e: "delete-video"): void;
+  (e: "toggle-private"): void;
 }>();
 
 const { globalMuted, toggleMuted, setMuted } = useSoundSetting();

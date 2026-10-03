@@ -67,6 +67,7 @@ import { useToast } from "@/composables/useToast";
 
 const tabs = [
   { key: "works", label: "作品", emptyText: "还没有可展示的视频，先去发布一个吧。" },
+  { key: "private", label: "私密作品", emptyText: "还没有私密作品，在作品里把视频设为私密即可。" },
   { key: "favorites", label: "收藏", emptyText: "还没有收藏的视频。" },
   { key: "likes", label: "点赞", emptyText: "还没有点赞的视频。" }
 ] as const;
@@ -96,11 +97,12 @@ const activeTabMeta = computed(() => tabs.find((tab) => tab.key === activeTab.va
 const activeVideos = computed(() => {
   if (activeTab.value === "favorites") return favoriteVideos.value;
   if (activeTab.value === "likes") return likeVideos.value;
-  return myVideos.value;
+  if (activeTab.value === "private") return myVideos.value.filter((video) => video.status === "private");
+  return myVideos.value.filter((video) => video.status !== "private");
 });
 
 function parseTab(raw: unknown): TabKey {
-  if (raw === "favorites" || raw === "likes") return raw;
+  if (raw === "favorites" || raw === "likes" || raw === "private") return raw;
   return "works";
 }
 
@@ -117,14 +119,17 @@ async function bootstrap() {
   }
 }
 
-// 每次切到收藏或点赞都重新拉一遍，播放页里取消操作后回来看到的就是最新列表
+// 每次切到收藏或点赞都重新拉一遍，播放页里取消操作后回来看到的就是最新列表；
+// 私密作品那一栏用同一份我的视频，只重新拉一次保证隐藏操作后的状态是最新的
 async function switchTab(key: TabKey) {
   activeTab.value = key;
   if (key === "works") return;
 
   listLoading.value = true;
   try {
-    if (key === "favorites") {
+    if (key === "private") {
+      myVideos.value = await fetchMyVideos(120);
+    } else if (key === "favorites") {
       favoriteVideos.value = await fetchAllVideoPages(fetchMyFavorites);
     } else {
       likeVideos.value = await fetchAllVideoPages(fetchMyLikes);
