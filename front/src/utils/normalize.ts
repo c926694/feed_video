@@ -20,7 +20,8 @@ export function normalizeUser(raw?: RawUser | null): User {
     bio: toString(raw?.signature ?? raw?.bio, "这个人很神秘，什么都没写。"),
     followCount: toNumber(raw?.follow_count),
     followerCount: toNumber(raw?.follower_count),
-    videoCount: toNumber(raw?.video_count)
+    videoCount: toNumber(raw?.video_count),
+    followed: Boolean(raw?.is_follow)
   };
 }
 

@@ -2,7 +2,13 @@
   <li class="message-item" :class="{ unread: !message.isRead }" @click="$emit('open', message)">
     <span class="unread-dot" aria-hidden="true"></span>
 
-    <img class="actor-avatar" :src="primaryActor.avatar || fallbackAvatar" :alt="primaryActor.nickname" />
+    <img
+      class="actor-avatar"
+      :src="primaryActor.avatar || fallbackAvatar"
+      :alt="primaryActor.nickname"
+      title="进入主页"
+      @click.stop="$emit('open-actor', primaryActor.id)"
+    />
 
     <div class="message-body">
       <p class="message-title">{{ message.title }}</p>
@@ -19,7 +25,11 @@ import { computed } from "vue";
 import type { MessageActor, MessageItem } from "@/types/domain";
 
 const props = defineProps<{ message: MessageItem }>();
-defineEmits<{ (e: "open", message: MessageItem): void }>();
+defineEmits<{
+  (e: "open", message: MessageItem): void;
+  // open-actor 点头像进触发者的主页，与整行点击的跳转分开
+  (e: "open-actor", actorId: number): void;
+}>();
 
 const fallbackAvatar = "https://feed-cp.oss-cn-beijing.aliyuncs.com/avatar/default.svg";
 

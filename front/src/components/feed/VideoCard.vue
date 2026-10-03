@@ -52,11 +52,14 @@
       @share="$emit('share')"
       @delete-video="$emit('delete-video')"
       @toggle-private="$emit('toggle-private')"
+      @open-profile="$emit('open-profile')"
     />
 
     <div class="info-overlay">
       <div class="author-line">
-        <span class="author-tag">@{{ video.author.username || video.author.nickname }}</span>
+        <button class="author-tag" type="button" title="进入主页" @click.stop="$emit('open-profile')">
+          @{{ video.author.username || video.author.nickname }}
+        </button>
       </div>
 
       <h3 v-if="video.title" class="video-heading">{{ video.title }}</h3>
@@ -132,6 +135,7 @@ defineEmits<{
   (e: "share"): void;
   (e: "delete-video"): void;
   (e: "toggle-private"): void;
+  (e: "open-profile"): void;
 }>();
 
 const { globalMuted, toggleMuted, setMuted } = useSoundSetting();
@@ -405,11 +409,15 @@ function formatTime(rawSeconds: number) {
 }
 
 .author-tag {
+  padding: 0;
+  border: none;
+  background-color: transparent;
   color: #ffffff;
   font-size: 17px;
   font-weight: 700;
   letter-spacing: -0.2px;
   text-shadow: 0 1px 4px rgba(0, 0, 0, 0.75);
+  cursor: pointer;
 }
 
 .video-heading {

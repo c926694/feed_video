@@ -62,7 +62,7 @@ func (h *Controller) Refresh(c *gin.Context) {
 }
 
 func (h *Controller) GetUserInfo(c *gin.Context) {
-	info, err := h.Logic.GetInfo(c.Request.Context(), auth.UserID(c))
+	info, err := h.Logic.GetInfo(c.Request.Context(), auth.UserID(c), auth.UserID(c))
 	if err != nil {
 		httpx.Fail(c, err)
 		return
@@ -77,7 +77,7 @@ func (h *Controller) GetOne(c *gin.Context) {
 		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "用户 ID 不合法"))
 		return
 	}
-	info, err := h.Logic.GetInfo(c.Request.Context(), userID)
+	info, err := h.Logic.GetInfo(c.Request.Context(), userID, auth.UserID(c))
 	if err != nil {
 		httpx.Fail(c, err)
 		return

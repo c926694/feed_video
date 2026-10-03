@@ -1,5 +1,5 @@
 <template>
-  <section class="profile-page">
+  <section ref="pageRef" class="profile-page">
     <header class="top-bar">
       <h1>我的</h1>
       <div class="top-actions">
@@ -40,14 +40,17 @@
 
     <div class="panel">
       <p v-if="listLoading" class="loading">加载中...</p>
-      <UserVideoGrid
-        v-else
-        :videos="activeVideos"
-        :empty-text="activeTabMeta.emptyText"
-        :manage="activeTab === 'works'"
-        :source="activeTab"
-        @changed="bootstrap"
-      />
+      <template v-else>
+        <UserVideoGrid
+          :videos="activeVideos"
+          :empty-text="activeTabMeta.emptyText"
+          :manage="activeTab === 'works'"
+          :source="activeTab"
+          @changed="bootstrap"
+        />
+        <p v-if="moreLoading" class="loading">加载中...</p>
+        <p v-else-if="activeTab === 'works' && !worksHasMore && myVideos.length" class="loading">没有更多了</p>
+      </template>
     </div>
 
     <BottomNav />
@@ -62,6 +65,7 @@ import BottomNav from "@/components/layout/BottomNav.vue";
 import ProfileHeader from "@/components/profile/ProfileHeader.vue";
 import UserVideoGrid from "@/components/profile/UserVideoGrid.vue";
 import { useAuth } from "@/composables/useAuth";
+import { useLoadMoreOnScroll } from "@/composables/useLoadMoreOnScroll";
 import type { User, Video } from "@/types/domain";
 import { useToast } from "@/composables/useToast";
 
@@ -80,7 +84,9 @@ const { clearAuth, refreshToken } = useAuth();
 const { showToast } = useToast();
 
 const currentUser = ref<User | null>(null);
+const pageRef = ref<HTMLElement | null>(null);
 const myVideos = ref<Video[]>([]);
+const privateVideos = ref<Video[]>([]);
 const favoriteVideos = ref<Video[]>([]);
 const likeVideos = ref<Video[]>([]);
 const activeTab = ref<TabKey>("works");
@@ -92,13 +98,19 @@ const avatarPreview = ref("");
 const form = ref({
   nickname: ""
 });
+const worksPageSize = 20;
+const worksCursor = ref<{ createdAt: number; id: number } | null>(null);
+const worksHasMore = ref(false);
+// 私密作品要按状态筛，接口不按状态过滤，所以单独把所有页取回来再筛
+const privatePageSize = 60;
+const privateMaxPages = 5;
 
 const activeTabMeta = computed(() => tabs.find((tab) => tab.key === activeTab.value) ?? tabs[0]);
 const activeVideos = computed(() => {
   if (activeTab.value === "favorites") return favoriteVideos.value;
   if (activeTab.value === "likes") return likeVideos.value;
-  if (activeTab.value === "private") return myVideos.value.filter((video) => video.status === "private");
-  return myVideos.value.filter((video) => video.status !== "private");
+  if (activeTab.value === "private") return privateVideos.value;
+  return myVideos.value;
 });
 
 function parseTab(raw: unknown): TabKey {
@@ -106,10 +118,47 @@ function parseTab(raw: unknown): TabKey {
   return "works";
 }
 
+// loadWorksPage 取作品栏的一页，游标取上一条的 created_at 与 id
+async function loadWorksPage(cursor: { createdAt: number; id: number } | null) {
+  const page = await fetchMyVideos(worksPageSize, cursor ? { createdAt: cursor.createdAt, id: cursor.id } : {});
+  const last = page[page.length - 1];
+  worksCursor.value = last ? { createdAt: new Date(last.createdAt ?? 0).getTime(), id: last.id } : null;
+  worksHasMore.value = page.length === worksPageSize;
+  return page;
+}
+
+// loadMoreWorks 滚到底时接上下一页作品
+async function loadMoreWorks() {
+  if (!worksCursor.value) return;
+  const page = await loadWorksPage(worksCursor.value);
+  myVideos.value = [...myVideos.value, ...page];
+}
+
+const { loading: moreLoading } = useLoadMoreOnScroll(
+  () => pageRef.value,
+  () => activeTab.value === "works" && worksHasMore.value && !listLoading.value,
+  loadMoreWorks
+);
+
+// loadPrivateVideos 逐页取回自己的视频再筛出私密的，取到没有下一页或者到达页数上限为止
+async function loadPrivateVideos() {
+  const all: Video[] = [];
+  let cursor: { createdAt: number; id: number } | null = null;
+  for (let page = 0; page < privateMaxPages; page += 1) {
+    const items = await fetchMyVideos(privatePageSize, cursor ? { createdAt: cursor.createdAt, id: cursor.id } : {});
+    if (!items.length) break;
+    all.push(...items);
+    if (items.length < privatePageSize) break;
+    const last = items[items.length - 1];
+    cursor = { createdAt: new Date(last.createdAt ?? 0).getTime(), id: last.id };
+  }
+  privateVideos.value = all.filter((video) => video.status === "private");
+}
+
 async function bootstrap() {
   try {
     currentUser.value = await fetchMe();
-    myVideos.value = await fetchMyVideos(120);
+    myVideos.value = await loadWorksPage(null);
     if (currentUser.value) {
       currentUser.value.videoCount = Math.max(currentUser.value.videoCount, myVideos.value.length);
       form.value.nickname = currentUser.value.nickname;
@@ -120,7 +169,7 @@ async function bootstrap() {
 }
 
 // 每次切到收藏或点赞都重新拉一遍，播放页里取消操作后回来看到的就是最新列表；
-// 私密作品那一栏用同一份我的视频，只重新拉一次保证隐藏操作后的状态是最新的
+// 私密作品那一栏单独取一次，隐藏操作之后回来看到的就是最新的
 async function switchTab(key: TabKey) {
   activeTab.value = key;
   if (key === "works") return;
@@ -128,7 +177,7 @@ async function switchTab(key: TabKey) {
   listLoading.value = true;
   try {
     if (key === "private") {
-      myVideos.value = await fetchMyVideos(120);
+      await loadPrivateVideos();
     } else if (key === "favorites") {
       favoriteVideos.value = await fetchAllVideoPages(fetchMyFavorites);
     } else {
@@ -222,7 +271,9 @@ onUnmounted(() => {
 
 <style scoped>
 .profile-page {
-  min-height: 100svh;
+  height: 100%;
+  overflow-y: auto;
+  padding-bottom: calc(72px + var(--safe-bottom));
 }
 
 .top-bar {

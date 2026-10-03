@@ -17,6 +17,7 @@
         @open-comment="openComment"
         @share="shareVideo(video)"
         @toggle-private="togglePrivate"
+        @open-profile="openProfile(video.author.id)"
       />
 
       <p v-if="video && isMyVideo && video.status === 'private'" class="private-hint">仅自己可见</p>
@@ -88,6 +89,12 @@ function goBack() {
     return;
   }
   router.push("/feed");
+}
+
+// openProfile 进入作者主页
+function openProfile(authorId: number) {
+  if (!authorId) return;
+  router.push(`/profile/${authorId}`);
 }
 
 // loadVideo 按路由参数取单条视频，带评论参数时直接打开评论抽屉

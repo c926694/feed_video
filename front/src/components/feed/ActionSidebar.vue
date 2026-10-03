@@ -1,7 +1,7 @@
 <template>
   <aside class="sidebar">
     <div v-if="showFollow" class="avatar-wrap">
-      <button class="avatar-btn" @click="$emit('toggle-follow')">
+      <button class="avatar-btn" title="进入主页" @click="$emit('open-profile')">
         <img v-if="video.author.avatar" :src="video.author.avatar" alt="avatar" />
         <span v-else class="avatar-initial">{{ (video.author.nickname || video.author.username || "匿").slice(0, 1) }}</span>
       </button>
@@ -123,6 +123,8 @@ defineEmits<{
   (e: "share"): void;
   (e: "delete-video"): void;
   (e: "toggle-private"): void;
+  // open-profile 进入作者主页，与 toggle-follow 分开：点头像进主页，点 + 才是关注
+  (e: "open-profile"): void;
 }>();
 </script>
 

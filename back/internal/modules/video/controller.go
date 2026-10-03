@@ -123,7 +123,17 @@ func (h *Controller) GetMyVideos(c *gin.Context) {
 		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "limit 参数不合法"))
 		return
 	}
-	list, err := h.Logic.GetMyVideos(c.Request.Context(), auth.UserID(c), limit)
+	lastCreatedAt, err := strconv.ParseInt(c.DefaultQuery("last_created_at", "0"), 10, 64)
+	if err != nil {
+		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "last_created_at 参数不合法"))
+		return
+	}
+	lastID, err := strconv.ParseUint(c.DefaultQuery("last_id", "0"), 10, 64)
+	if err != nil {
+		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "last_id 参数不合法"))
+		return
+	}
+	list, err := h.Logic.GetMyVideos(c.Request.Context(), auth.UserID(c), lastCreatedAt, lastID, limit)
 	if err != nil {
 		httpx.Fail(c, err)
 		return

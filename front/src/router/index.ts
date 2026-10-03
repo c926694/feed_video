@@ -22,7 +22,8 @@ const router = createRouter({
     { path: "/video/:id", component: VideoPage },
     { path: "/profile", component: ProfilePage },
     { path: "/profile/videos", component: ProfileVideoPage },
-    { path: "/profile/:id", component: UserProfilePage }
+    { path: "/profile/:id", component: UserProfilePage },
+    { path: "/profile/:id/videos", component: ProfileVideoPage }
   ]
 });
 

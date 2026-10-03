@@ -12,6 +12,7 @@
       @toggle-follow="toggleFollow(video.author.id)"
       @open-comment="openComment(video.id)"
       @share="shareVideo(video)"
+      @open-profile="openProfile(video.author.id)"
     />
 
     <div v-if="loading" class="loading">加载中...</div>
@@ -37,6 +38,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
+import { useRouter } from "vue-router";
 import { fetchFeedVideos, fetchFollowVideos, fetchHotVideos } from "@/api";
 import CommentDrawer from "@/components/feed/CommentDrawer.vue";
 import VideoCard from "@/components/feed/VideoCard.vue";
@@ -61,6 +63,7 @@ const props = withDefaults(
 );
 
 const containerRef = ref<HTMLElement | null>(null);
+const router = useRouter();
 const loading = ref(false);
 const recommendVideos = ref<Video[]>([]);
 const followVideos = ref<Video[]>([]);
@@ -188,11 +191,13 @@ function upsertVideosKeepOrder(base: Video[], incoming: Video[]) {
   return result;
 }
 
-function scrollToIndex(index: number) {  const node = containerRef.value;
+// scrollToIndex 定位到某一条。用户主动切换时用 smooth 让方向可见，
+// 从热榜点进某条播放时用 auto，直接停在目标上，不播放滚动过程
+function scrollToIndex(index: number, behavior: ScrollBehavior = "smooth") {  const node = containerRef.value;
   if (!node) return;
   node.scrollTo({
     top: index * node.clientHeight,
-    behavior: "smooth"
+    behavior
   });
 }
 
@@ -231,7 +236,7 @@ async function alignHotStartVideo() {
   if (targetIndex < 0) return;
   activeIndex.value = targetIndex;
   await nextTick();
-  scrollToIndex(targetIndex);
+  scrollToIndex(targetIndex, "auto");
 }
 
 function switchPrev() {
@@ -320,6 +325,12 @@ function openComment(videoId: number) {
 function shareVideo(video: Video) {
   navigator.clipboard.writeText(video.playUrl).catch(() => undefined);
   showToast("已复制视频链接");
+}
+
+// openProfile 进入作者主页，自己的视频走自己主页
+function openProfile(authorId: number) {
+  if (!authorId) return;
+  router.push(`/profile/${authorId}`);
 }
 
 watch(

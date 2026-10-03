@@ -1,5 +1,5 @@
 <template>
-  <div class="message-page">
+  <div ref="pageRef" class="message-page" @scroll.passive="onScroll">
     <header class="message-header">
       <button class="back-btn" type="button" @click="router.back()">返回</button>
       <h1 class="page-title">消息</h1>
@@ -13,6 +13,7 @@
         :key="item.id"
         :message="item"
         @open="openMessage"
+        @open-actor="openActor"
       />
     </ul>
 
@@ -38,6 +39,7 @@ const { showToast } = useToast();
 const { unreadCount, refresh: refreshUnread } = useUnreadMessages();
 
 const messages = ref<MessageItemType[]>([]);
+const pageRef = ref<HTMLElement | null>(null);
 const loading = ref(false);
 const noMore = ref(false);
 const cursor = ref<{ lastCreatedAt: number; lastId: number }>({ lastCreatedAt: 0, lastId: 0 });
@@ -81,6 +83,12 @@ async function readAll() {
   }
 }
 
+// openActor 点通知里的头像进触发者主页
+function openActor(actorId: number) {
+  if (!actorId) return;
+  router.push(`/profile/${actorId}`);
+}
+
 // 点击一条：先标记这条已读，再按类型跳转。
 // 内容类通知跳单条视频页，评论类把评论 ID 带上，由评论抽屉定位到那一条；
 // 关注类跳到对方的资料页
@@ -107,10 +115,9 @@ async function openMessage(item: MessageItemType) {
 }
 
 function onScroll() {
-  const scrollTop = window.scrollY || document.documentElement.scrollTop;
-  const viewport = window.innerHeight;
-  const full = document.documentElement.scrollHeight;
-  if (full - (scrollTop + viewport) < 240) {
+  const node = pageRef.value;
+  if (!node) return;
+  if (node.scrollHeight - (node.scrollTop + node.clientHeight) < 240) {
     void loadMore();
   }
 }
@@ -118,17 +125,17 @@ function onScroll() {
 onMounted(async () => {
   await loadFirstPage();
   await refreshUnread();
-  window.addEventListener("scroll", onScroll, { passive: true });
 });
 
 onBeforeUnmount(() => {
-  window.removeEventListener("scroll", onScroll);
+  // 滚动监听绑在页面容器上，由模板里的 @scroll 负责，这里不需要额外处理
 });
 </script>
 
 <style scoped>
 .message-page {
-  min-height: 100vh;
+  height: 100%;
+  overflow-y: auto;
   background-color: #000000;
   color: #ffffff;
   padding-bottom: calc(72px + var(--safe-bottom));

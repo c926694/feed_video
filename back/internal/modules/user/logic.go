@@ -74,7 +74,8 @@ func (l *Logic) Login(ctx context.Context, username string, password string) (au
 	return l.auth.Issue(ctx, item.ID)
 }
 
-func (l *Logic) GetInfo(ctx context.Context, userID uint64) (*InfoRes, error) {
+// GetInfo 取用户资料，viewerID 是发起请求的人，用来判断他是否关注了这个用户
+func (l *Logic) GetInfo(ctx context.Context, userID uint64, viewerID uint64) (*InfoRes, error) {
 	item, err := l.users.GetByID(ctx, userID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -82,7 +83,23 @@ func (l *Logic) GetInfo(ctx context.Context, userID uint64) (*InfoRes, error) {
 		}
 		return nil, err
 	}
-	return l.toInfoRes(item), nil
+	followed, err := l.isFollowing(ctx, viewerID, userID)
+	if err != nil {
+		return nil, err
+	}
+	return l.toInfoRes(item, followed), nil
+}
+
+// isFollowing 判断 viewerID 是否关注了 userID，看自己的资料时恒为 false
+func (l *Logic) isFollowing(ctx context.Context, viewerID uint64, userID uint64) (bool, error) {
+	if viewerID == 0 || viewerID == userID {
+		return false, nil
+	}
+	following, err := l.follows.FilterFollowing(ctx, viewerID, []uint64{userID})
+	if err != nil {
+		return false, err
+	}
+	return following[userID], nil
 }
 
 func (l *Logic) UpdateProfile(ctx context.Context, userID uint64, nickname string, avatar *multipart.FileHeader) (*InfoRes, error) {
@@ -134,7 +151,7 @@ func (l *Logic) UpdateProfile(ctx context.Context, userID uint64, nickname strin
 		return nil, err
 	}
 
-	return l.toInfoRes(updated), nil
+	return l.toInfoRes(updated, false), nil
 }
 
 // Refresh 用 refresh token 换一对新令牌
@@ -229,7 +246,7 @@ func (l *Logic) syncVideoCount(ctx context.Context, userID uint64) error {
 	return nil
 }
 
-func (l *Logic) toInfoRes(item *userrepo.User) *InfoRes {
+func (l *Logic) toInfoRes(item *userrepo.User, isFollow bool) *InfoRes {
 	return &InfoRes{
 		UserID:        item.ID,
 		Username:      item.Username,
@@ -238,6 +255,7 @@ func (l *Logic) toInfoRes(item *userrepo.User) *InfoRes {
 		FollowCount:   item.FollowCount,
 		FollowerCount: item.FollowerCount,
 		VideoCount:    item.VideoCount,
+		IsFollow:      isFollow,
 	}
 }
 

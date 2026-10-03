@@ -343,8 +343,13 @@ func validateUploadKey(sourceType upload.SourceType, key string, userID uint64) 
 	return nil
 }
 
-func (l *Logic) GetMyVideos(ctx context.Context, userID uint64, limit uint64) ([]InfoRes, error) {
-	items, err := l.videos.ListByAuthor(ctx, userID, limit)
+// GetMyVideos 取自己的视频（含未发布与私密），双字段游标分页，首页 lastID 传 0
+func (l *Logic) GetMyVideos(ctx context.Context, userID uint64, lastCreatedAt int64, lastID uint64, limit uint64) ([]InfoRes, error) {
+	var cursor time.Time
+	if lastID > 0 {
+		cursor = time.UnixMilli(lastCreatedAt)
+	}
+	items, err := l.videos.ListByAuthor(ctx, userID, limit, cursor, lastID)
 	if err != nil {
 		return nil, err
 	}

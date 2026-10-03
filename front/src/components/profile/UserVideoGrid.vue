@@ -42,11 +42,14 @@ const props = withDefaults(
     manage?: boolean;
     // source 决定点开视频后播放页加载哪个列表
     source?: string;
+    // ownerId 是别人主页的用户 ID，填了就跳到那个人的滑动播放页
+    ownerId?: number;
   }>(),
   {
     emptyText: "还没有可展示的视频，先去发布一个吧。",
     manage: true,
-    source: "works"
+    source: "works",
+    ownerId: 0
   }
 );
 
@@ -61,7 +64,11 @@ function isPending(video: Video) {
   return props.manage && (video.status === "created" || video.status === "failed");
 }
 
+// videoLink 自己的作品跳自己的播放页，别人主页上的作品跳按作者的播放页
 function videoLink(video: Video) {
+  if (props.ownerId > 0) {
+    return { path: `/profile/${props.ownerId}/videos`, query: { videoId: video.id } };
+  }
   return { path: "/profile/videos", query: { videoId: video.id, source: props.source } };
 }
 

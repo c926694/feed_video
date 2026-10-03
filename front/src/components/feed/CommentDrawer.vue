@@ -10,8 +10,10 @@
         <ul class="list">
           <li v-for="item in comments" :key="item.id" :data-comment-id="item.id" :class="{ focused: item.id === highlightId }">
             <div class="author-row">
-              <img v-if="item.author.avatar" :src="item.author.avatar" alt="avatar" />
-              <span>{{ item.author.username || item.author.nickname }}</span>
+              <button class="author-entry" type="button" title="进入主页" @click="openProfile(item.author.id)">
+                <img v-if="item.author.avatar" :src="item.author.avatar" alt="avatar" />
+                <span>{{ item.author.username || item.author.nickname }}</span>
+              </button>
               <em v-if="isMine(item)" class="me-badge">我</em>
             </div>
             <p>{{ item.content }}</p>
@@ -34,10 +36,12 @@
                   :data-comment-id="reply.id"
                   :class="{ focused: reply.id === highlightId }"
                 >
-                  <span class="reply-author">
-                    <img v-if="reply.author.avatar" :src="reply.author.avatar" alt="avatar" />
-                    {{ reply.author.username || reply.author.nickname }}
-                  </span>
+                  <button class="author-entry" type="button" title="进入主页" @click="openProfile(reply.author.id)">
+                    <span class="reply-author">
+                      <img v-if="reply.author.avatar" :src="reply.author.avatar" alt="avatar" />
+                      {{ reply.author.username || reply.author.nickname }}
+                    </span>
+                  </button>
                   <em v-if="isMine(reply)" class="me-badge">我</em>
                   <span v-if="reply.replyToUserName" class="reply-to">回复 @{{ reply.replyToUserName }}</span>
                   <p>{{ reply.content }}</p>
@@ -84,6 +88,7 @@
 
 <script setup lang="ts">
 import { nextTick, ref, watch } from "vue";
+import { useRouter } from "vue-router";
 import { createComment, deleteComment, fetchComment, fetchCommentList, fetchMe, fetchReplyList, setCommentLike } from "@/api";
 import type { Comment } from "@/types/domain";
 import { useToast } from "@/composables/useToast";
@@ -100,6 +105,13 @@ defineEmits<{
 }>();
 
 const { showToast } = useToast();
+const router = useRouter();
+
+// openProfile 点评论作者进他的主页
+function openProfile(authorId: number) {
+  if (!authorId) return;
+  router.push(`/profile/${authorId}`);
+}
 
 const comments = ref<Comment[]>([]);
 const draft = ref("");
@@ -460,6 +472,19 @@ li.focused {
   color: rgba(255, 255, 255, 0.65);
   font-size: 13px;
   font-weight: 600;
+}
+
+/* 作者信息整块可点，进他的主页 */
+.author-entry {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0;
+  border: none;
+  background-color: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
 }
 
 .author-row img {

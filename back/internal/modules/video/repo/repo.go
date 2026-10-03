@@ -111,13 +111,14 @@ func (r *Repo) FilterByIDs(ctx context.Context, videoIDs []uint64) ([]Video, err
 	return items, nil
 }
 
-func (r *Repo) ListByAuthor(ctx context.Context, authorID uint64, limit uint64) ([]Video, error) {
+// ListByAuthor 作者的全部视频（含未发布与私密），双字段游标分页，第一页 lastID 传 0
+func (r *Repo) ListByAuthor(ctx context.Context, authorID uint64, limit uint64, lastCreatedAt time.Time, lastID uint64) ([]Video, error) {
 	items := make([]Video, 0, limit)
-	err := r.db.WithContext(ctx).
-		Where("author_id = ?", authorID).
-		Order("created_at desc").
-		Limit(int(limit)).
-		Find(&items).Error
+	query := r.db.WithContext(ctx).Where("author_id = ?", authorID)
+	if lastID > 0 {
+		query = query.Where("created_at <= ? AND id < ?", lastCreatedAt, lastID)
+	}
+	err := query.Order("created_at desc, id desc").Limit(int(limit)).Find(&items).Error
 	return items, err
 }
 

@@ -7,6 +7,8 @@ export interface User {
   followCount: number;
   followerCount: number;
   videoCount: number;
+  // followed 表示当前登录用户是否关注了他，取自己的资料时恒为 false
+  followed: boolean;
 }
 
 export interface TokenPair {

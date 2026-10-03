@@ -95,9 +95,13 @@ export async function fetchFollowVideos(params: FeedParams = {}) {
   return fetchFeedByPath("/videos/feed/follow", params);
 }
 
-export async function fetchMyVideos(limit = 60) {
+// fetchMyVideos 取自己的视频，带双字段游标：首页不传游标，下一页把上一条返回的 createdAt 与 id 传回
+export async function fetchMyVideos(limit = 60, cursor: { createdAt?: number; id?: number } = {}) {
   const { data } = await http.get("/videos/me", {
-    params: { limit }
+    params: {
+      limit,
+      ...(cursor.id ? { last_created_at: cursor.createdAt, last_id: cursor.id } : {})
+    }
   });
   const body = unwrapData<unknown>(data);
   return pickVideoList(body).map(normalizeVideo);
