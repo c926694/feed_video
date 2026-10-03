@@ -1,6 +1,5 @@
 <template>
-  <section class="feed-page">
-    <aside class="left-rail">
+  <section class="feed-page">    <aside class="left-rail">
       <div class="brand">
         <div class="brand-glitch" aria-hidden="true">
           <span class="glitch-cyan"></span>
@@ -94,6 +93,8 @@
         <VideoFeed v-else-if="tab !== 'hot'" :tab="tab" />
       </div>
     </section>
+
+    <BottomNav />
   </section>
 </template>
 
@@ -101,6 +102,7 @@
 import { computed, ref, watch } from "vue";
 import HotRankBoard from "@/components/feed/HotRankBoard.vue";
 import VideoFeed from "@/components/feed/VideoFeed.vue";
+import BottomNav from "@/components/layout/BottomNav.vue";
 import { useUnreadMessages } from "@/composables/useUnreadMessages";
 import type { Video } from "@/types/domain";
 
@@ -143,6 +145,8 @@ watch(
 
 <style scoped>
 .feed-page {
+  /* 底部导航占用的高度，卡片里的信息区与操作栏按它上移，避免被导航盖住 */
+  --nav-space: 64px;
   width: 100vw;
   height: 100svh;
   background-color: #000000;

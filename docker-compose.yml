@@ -1,13 +1,23 @@
+# 一键起整套服务：
+#   1. cp back/config/config.compose.example.yaml back/config/config.yaml
+#   2. 填好 config.yaml 里标「必填」的项（数据库密码、JWT 密钥、OSS 与 RAM 凭据）
+#   3. docker compose up -d
+# 代码改动之后要重新构建镜像：docker compose up -d --build
+#
+# 容器之间用服务名互访（mysql / redis / kafka / backend），不要写 IP。
+
 services:
   mysql:
     image: mysql:8.0.36
     restart: unless-stopped
+    # 容器内端口固定 3307，与后端配置保持一致；映射到宿主机方便用本地客户端连
     command:
       - --port=3307
       - --default-authentication-plugin=mysql_native_password
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
     environment:
+      # 与 back/config/config.yaml 里的 mysql.password 保持一致
       MYSQL_ROOT_PASSWORD: "1234"
       MYSQL_DATABASE: feed_video
       TZ: Asia/Shanghai
@@ -26,6 +36,8 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     command: ["redis-server", "--port", "6380"]
+    environment:
+      TZ: Asia/Shanghai
     ports:
       - "6380:6380"
     volumes:
@@ -44,16 +56,21 @@ services:
       KAFKA_CFG_NODE_ID: "1"
       KAFKA_CFG_PROCESS_ROLES: broker,controller
       KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_CFG_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
-      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://192.168.145.101:9092
-      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      # 两个监听器：INTERNAL 给容器之间用，通告 kafka:9092；
+      # EXTERNAL 给宿主机上的命令行工具用，通告地址由 KAFKA_EXTERNAL_HOST 控制
+      KAFKA_CFG_LISTENERS: INTERNAL://:9092,EXTERNAL://:19092,CONTROLLER://:9093
+      KAFKA_CFG_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://${KAFKA_EXTERNAL_HOST:-localhost}:19092
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CFG_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
       KAFKA_KRAFT_CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
       KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "true"
       ALLOW_PLAINTEXT_LISTENER: "yes"
       TZ: Asia/Shanghai
     ports:
+      # 9092 给容器网络外的客户端连；宿主机工具请用 19092 这个外部监听器
       - "9092:9092"
+      - "19092:19092"
     volumes:
       - kafka_data:/bitnami/kafka
     healthcheck:
@@ -70,13 +87,16 @@ services:
     restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
-      # OSS 凭据由宿主机环境注入，不要写进仓库
+      # 凭据除了写在 config.yaml 里，也可以在这里注入：配置里留空时用它兜底
       OSS_ACCESS_KEY_ID: ${OSS_ACCESS_KEY_ID:-}
       OSS_ACCESS_KEY_SECRET: ${OSS_ACCESS_KEY_SECRET:-}
+      RAM_ACCESS_KEY_ID: ${RAM_ACCESS_KEY_ID:-}
+      RAM_ACCESS_KEY_SECRET: ${RAM_ACCESS_KEY_SECRET:-}
     ports:
       - "8081:8081"
     volumes:
-      - ./back/config/config.compose.example.yaml:/app/config/config.yaml:ro
+      # 配置的唯一来源：宿主机上的这一份，只读挂载，不进镜像
+      - ./back/config/config.yaml:/app/config/config.yaml:ro
     depends_on:
       mysql:
         condition: service_healthy
@@ -84,17 +104,27 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
+    healthcheck:
+      # /healthz 是不需要鉴权的存活探测接口
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8081/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
 
   web:
     build:
       context: ./front
       dockerfile: Dockerfile
     restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
     ports:
       - "81:81"
     depends_on:
+      # 等后端真的能提供服务再起 nginx，避免刚启动那几秒 502
       backend:
-        condition: service_started
+        condition: service_healthy
 
 volumes:
   mysql_data:

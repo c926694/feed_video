@@ -132,7 +132,7 @@ defineEmits<{
 .sidebar {
   position: absolute;
   right: 12px;
-  bottom: 80px;
+  bottom: calc(80px + var(--nav-space, 0px));
   z-index: 15;
   display: flex;
   flex-direction: column;

@@ -1,0 +1,11 @@
+# 依赖在镜像里用 npm ci 装，本机的 node_modules 是别的平台的原生二进制，
+# 复制进去会覆盖掉容器里那份，导致 vite 构建失败
+node_modules/
+
+# 本机构建产物与缓存
+dist/
+.vite/
+.cache/
+
+# 杂项
+*.log

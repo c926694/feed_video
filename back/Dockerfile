@@ -28,8 +28,9 @@ RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
     && apk add --no-cache ca-certificates tzdata
 
 COPY --from=builder /out/server /app/server
-COPY config/config.compose.example.yaml /app/config/config.yaml
 
+# 配置由 compose 挂载到 /app/config/config.yaml，不写进镜像，
+# 这样同一份镜像在任何机器上都能用，凭据也不会留在镜像层里
 EXPOSE 8081
 
 CMD ["/app/server"]

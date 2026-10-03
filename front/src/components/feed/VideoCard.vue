@@ -394,7 +394,7 @@ function formatTime(rawSeconds: number) {
   position: absolute;
   left: 16px;
   right: 84px;
-  bottom: 24px;
+  bottom: calc(24px + var(--nav-space, 0px));
   z-index: 9;
   display: flex;
   flex-direction: column;

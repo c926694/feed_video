@@ -140,6 +140,13 @@ func (c *Config) applyDefaults() {
 	if c.Upload.OSS.AccessKeySecret == "" {
 		c.Upload.OSS.AccessKeySecret = os.Getenv("OSS_ACCESS_KEY_SECRET")
 	}
+	// STS 临时凭证用的子账号密钥同样支持环境变量注入，容器部署时不必写进配置文件
+	if c.RAM.AccessKeyID == "" {
+		c.RAM.AccessKeyID = os.Getenv("RAM_ACCESS_KEY_ID")
+	}
+	if c.RAM.AccessKeySecret == "" {
+		c.RAM.AccessKeySecret = os.Getenv("RAM_ACCESS_KEY_SECRET")
+	}
 	if c.RAM.RoleSessionName == "" {
 		c.RAM.RoleSessionName = "feed-video"
 	}

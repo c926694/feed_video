@@ -19,13 +19,16 @@
 
     <p v-else-if="!loading" class="empty-text">还没有收到消息</p>
     <p v-if="loading" class="loading-text">加载中...</p>
-    <p v-if="noMore && messages.length" class="loading-text">没有更多了</p>
+    <p v-else-if="noMore && messages.length" class="loading-text">没有更多了</p>
+
+    <BottomNav />
   </div>
 </template>
 
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
+import BottomNav from "@/components/layout/BottomNav.vue";
 import MessageItem from "@/components/message/MessageItem.vue";
 import { fetchMessageList, markMessagesRead } from "@/api";
 import { useToast } from "@/composables/useToast";

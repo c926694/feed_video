@@ -101,7 +101,9 @@ func main() {
 	}
 
 	gin.SetMode(cfg.Server.Mode)
-	r := gin.Default()
+	r := gin.New()
+	// 存活探测每十几秒一次，日志里跳过它，其余请求照常记录
+	r.Use(gin.LoggerWithConfig(gin.LoggerConfig{SkipPaths: []string{"/healthz"}}), gin.Recovery())
 	// 允许前端开发服务器跨域访问
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     cfg.Server.AllowOrigins,
@@ -113,6 +115,10 @@ func main() {
 		MaxAge:           12 * time.Hour,
 	}))
 	r.HandleMethodNotAllowed = true
+	// 存活探测：不需要鉴权，供容器健康检查使用
+	r.GET("/healthz", func(c *gin.Context) {
+		c.String(http.StatusOK, "ok")
+	})
 	r.NoRoute(func(c *gin.Context) {
 		httpx.Fail(c, httpx.New(httpx.CodeNotFound, "接口不存在"))
 	})

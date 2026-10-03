@@ -446,7 +446,7 @@ void loadInitial();
 .end-tip {
   position: fixed;
   left: 50%;
-  bottom: 24px;
+  bottom: calc(24px + var(--nav-space, 0px));
   transform: translateX(-50%);
   z-index: 26;
   padding: 8px 16px;
