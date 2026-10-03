@@ -35,11 +35,15 @@ docker compose up -d
 
 ## 三、服务与端口
 
-- `web`：前端 nginx，宿主机 `81`
-- `backend`：Go 服务，HTTP 与 Kafka 消费者在同一个进程，宿主机 `8081`
-- `mysql`：宿主机 `3307`
-- `redis`：宿主机 `6380`
-- `kafka`：容器之间用 `9092`；宿主机上的命令行工具用 `19092`（对外监听器）
+容器名统一是 `feed-` 前缀（由 `container_name` 指定），也可以用 compose 的服务名操作。
+
+- `web`：容器 `feed-web`，前端 nginx，宿主机 `81`
+- `backend`：容器 `feed-backend`，Go 服务，HTTP 与 Kafka 消费者在同一个进程，宿主机 `8081`
+- `mysql`：容器 `feed-mysql`，宿主机 `3307`
+- `redis`：容器 `feed-redis`，宿主机 `6380`
+- `kafka`：容器 `feed-kafka`，容器之间用 `9092`；宿主机上的命令行工具用 `19092`（对外监听器）
+
+数据放在命名卷 `feed_video_mysql_data`、`feed_video_redis_data`、`feed_video_kafka_data` 里，卷名带项目名，与容器名无关。
 
 ## 四、访问与排查
 
@@ -51,8 +55,9 @@ docker compose up -d
 
 ```bash
 docker compose ps                    # 容器与健康状态
-docker compose logs -f backend       # 后端日志，含 Kafka 消费日志
-docker compose logs --tail=100 web   # nginx 日志
+docker logs -f feed-backend          # 后端日志，含 Kafka 消费日志
+docker logs --tail=100 feed-web      # nginx 日志
+docker compose logs -f backend       # 用服务名看同一份日志
 docker compose down                  # 停止并删除容器，数据卷保留
 docker compose down -v               # 连数据卷一起删，下次启动是空库
 ```

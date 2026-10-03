@@ -5,10 +5,12 @@
 # 代码改动之后要重新构建镜像：docker compose up -d --build
 #
 # 容器之间用服务名互访（mysql / redis / kafka / backend），不要写 IP。
+# 容器名统一是 feed- 前缀，由各服务的 container_name 指定。
 
 services:
   mysql:
     image: mysql:8.0.36
+    container_name: feed-mysql
     restart: unless-stopped
     # 容器内端口固定 3307，与后端配置保持一致；映射到宿主机方便用本地客户端连
     command:
@@ -34,6 +36,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    container_name: feed-redis
     restart: unless-stopped
     command: ["redis-server", "--port", "6380"]
     environment:
@@ -50,6 +53,7 @@ services:
 
   kafka:
     image: bitnami/kafka:3.7
+    container_name: feed-kafka
     restart: unless-stopped
     environment:
       KAFKA_ENABLE_KRAFT: "yes"
@@ -84,6 +88,7 @@ services:
     build:
       context: ./back
       dockerfile: Dockerfile
+    container_name: feed-backend
     restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
@@ -116,6 +121,7 @@ services:
     build:
       context: ./front
       dockerfile: Dockerfile
+    container_name: feed-web
     restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
