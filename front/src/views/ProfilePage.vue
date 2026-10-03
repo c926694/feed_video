@@ -8,7 +8,13 @@
       </div>
     </header>
 
-    <ProfileHeader v-if="currentUser" :user="currentUser" :video-count="myVideos.length" />
+    <ProfileHeader
+      v-if="currentUser"
+      :user="currentUser"
+      :video-count="myVideos.length"
+      @open-following="openFollowList('following')"
+      @open-followers="openFollowList('followers')"
+    />
     <p v-else class="loading">正在加载个人信息...</p>
 
     <form v-if="currentUser && editing" class="edit-panel" @submit.prevent="onSaveProfile">
@@ -116,6 +122,13 @@ const activeVideos = computed(() => {
 function parseTab(raw: unknown): TabKey {
   if (raw === "favorites" || raw === "likes" || raw === "private") return raw;
   return "works";
+}
+
+// openFollowList 进自己的关注或粉丝列表
+function openFollowList(kind: "following" | "followers") {
+  const me = currentUser.value;
+  if (!me) return;
+  router.push(`/profile/${me.id}/${kind}`);
 }
 
 // loadWorksPage 取作品栏的一页，游标取上一条的 created_at 与 id

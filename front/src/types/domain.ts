@@ -71,6 +71,21 @@ export interface MessagePage {
   lastId: number;
 }
 
+// FollowUser 关注列表与粉丝列表里的一项
+export interface FollowUser {
+  id: number;
+  nickname: string;
+  avatar: string;
+  followed: boolean;
+}
+
+// FollowPage 关注列表与粉丝列表的分页结果
+export interface FollowPage {
+  users: FollowUser[];
+  lastId: number;
+  hasMore: boolean;
+}
+
 export interface Comment {
   id: number;
   content: string;

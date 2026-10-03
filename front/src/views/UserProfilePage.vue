@@ -5,7 +5,13 @@
       <h1>主页</h1>
     </header>
 
-    <ProfileHeader v-if="user" :user="user" :video-count="videos.length" />
+    <ProfileHeader
+      v-if="user"
+      :user="user"
+      :video-count="videos.length"
+      @open-following="router.push(`/profile/${profileUserId}/following`)"
+      @open-followers="router.push(`/profile/${profileUserId}/followers`)"
+    />
     <p v-else-if="loading" class="loading">正在加载用户信息...</p>
     <p v-else class="loading">用户不存在</p>
 

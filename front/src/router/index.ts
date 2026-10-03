@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from "vue-router";
 import FeedPage from "@/views/FeedPage.vue";
+import FollowListPage from "@/views/FollowListPage.vue";
 import LoginPage from "@/views/LoginPage.vue";
 import MessagePage from "@/views/MessagePage.vue";
 import ProfilePage from "@/views/ProfilePage.vue";
@@ -23,7 +24,9 @@ const router = createRouter({
     { path: "/profile", component: ProfilePage },
     { path: "/profile/videos", component: ProfileVideoPage },
     { path: "/profile/:id", component: UserProfilePage },
-    { path: "/profile/:id/videos", component: ProfileVideoPage }
+    { path: "/profile/:id/videos", component: ProfileVideoPage },
+    { path: "/profile/:id/following", component: FollowListPage },
+    { path: "/profile/:id/followers", component: FollowListPage }
   ]
 });
 

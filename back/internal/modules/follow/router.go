@@ -17,6 +17,7 @@ func NewLogic(ctx *svc.ServiceContext) *Logic {
 	return &Logic{
 		repo:     followrepo.New(ctx.DB, ctx.Redis),
 		producer: ctx.Producer,
+		uploader: ctx.Upload,
 	}
 }
 
@@ -26,6 +27,8 @@ func RegisterHTTP(r *gin.Engine, ctx *svc.ServiceContext) (*gin.Engine, error) {
 	{
 		group.POST("/:id", ctx.Auth.Middleware(), controller.Follow)
 		group.DELETE("/:id", ctx.Auth.Middleware(), controller.Unfollow)
+		group.GET("/following/:id", ctx.Auth.Middleware(), controller.ListFollowing)
+		group.GET("/followers/:id", ctx.Auth.Middleware(), controller.ListFollowers)
 	}
 	return r, nil
 }

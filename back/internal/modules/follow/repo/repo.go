@@ -26,6 +26,14 @@ type Follow struct {
 	CreateTime time.Time `gorm:"column:created_at;default:CURRENT_TIMESTAMP(3)" json:"created_at"`
 }
 
+// ListItem 关注或粉丝列表里的一项，昵称头像取自 user 表
+type ListItem struct {
+	RelationID uint64 `gorm:"column:relation_id"`
+	UserID     uint64 `gorm:"column:user_id"`
+	Nickname   string `gorm:"column:nickname"`
+	AvatarURL  string `gorm:"column:avatar_url"`
+}
+
 // Repo 关注关系的读写，集合在 Redis，关系表在 MySQL
 type Repo struct {
 	db          *gorm.DB
@@ -173,6 +181,37 @@ func (r *Repo) FollowerIDsPage(ctx context.Context, following uint64, cursor uin
 		ids = append(ids, id)
 	}
 	return ids, next, nil
+}
+
+// FollowingPage 关注列表：这个人关注了谁，按关系 ID 倒序（最近关注的在前面）。
+// 内连接 user 表，已经没有账号的关系行不会出现
+func (r *Repo) FollowingPage(ctx context.Context, follower uint64, lastID uint64, limit int) ([]ListItem, error) {
+	items := make([]ListItem, 0, limit)
+	query := r.db.WithContext(ctx).
+		Table("follow AS f").
+		Select("f.id AS relation_id, u.id AS user_id, u.nick_name AS nickname, u.avatar_url AS avatar_url").
+		Joins("JOIN user AS u ON u.id = f.following").
+		Where("f.follower = ?", follower)
+	if lastID > 0 {
+		query = query.Where("f.id < ?", lastID)
+	}
+	err := query.Order("f.id desc").Limit(limit).Scan(&items).Error
+	return items, err
+}
+
+// FollowersPage 粉丝列表：谁关注了这个人，按关系 ID 倒序（最近关注的在前面）
+func (r *Repo) FollowersPage(ctx context.Context, following uint64, lastID uint64, limit int) ([]ListItem, error) {
+	items := make([]ListItem, 0, limit)
+	query := r.db.WithContext(ctx).
+		Table("follow AS f").
+		Select("f.id AS relation_id, u.id AS user_id, u.nick_name AS nickname, u.avatar_url AS avatar_url").
+		Joins("JOIN user AS u ON u.id = f.follower").
+		Where("f.following = ?", following)
+	if lastID > 0 {
+		query = query.Where("f.id < ?", lastID)
+	}
+	err := query.Order("f.id desc").Limit(limit).Scan(&items).Error
+	return items, err
 }
 
 // RestoreSets 从关注表分页扫出全部关系，重建两个方向的集合。
