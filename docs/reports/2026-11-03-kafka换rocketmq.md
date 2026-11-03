@@ -42,11 +42,12 @@ rocketmq:
 
 `docker-compose.yml`：kafka 服务换成 `namesrv` + `broker`（`mqbroker --enable-proxy` 的 ProxyStartup local 模式，同一进程同时提供 10911 remoting 与 18080 gRPC）。
 
-新增 `rocketmq/` 下三个文件：
+新增 `rocketmq/` 下四个文件：
 
-- `broker.conf`：`brokerIP1=192.168.145.101`、`autoCreateTopicEnable=true`、`autoCreateSubscriptionGroup=true`；
+- `broker.conf`：`brokerIP1=broker`（compose 服务名）、`autoCreateTopicEnable=true`、`autoCreateSubscriptionGroup=true`；
 - `proxy.conf`：JSON 格式，`{"grpcServerPort": 18080}`；
-- `init-topics.sh`：创建 9 个业务 topic、9 个 `<topic>_failed`、8 个消费组。
+- `init-topics.sh`：创建 9 个业务 topic、9 个 `<topic>_failed`、8 个消费组；
+- `start-broker.sh`：Broker 容器的入口脚本，`exec` 起 Broker 进程，同时后台等它注册完成后跑一次 `init-topics.sh`，日志写到 `/home/rocketmq/init-topics.log`。
 
 ### 依赖
 
@@ -85,7 +86,7 @@ rocketmq:
 - 配置：`kafka` 段整体替换为 `rocketmq` 段，旧配置不再被读取；
 - 部署：`kafka` 服务移除，新增 `namesrv`、`broker`；`backend` 的 `depends_on` 从 kafka 改为 broker；
 - 依赖：`kafka-go` 移除，新增 grpc/protobuf/zap/opencensus 等间接依赖，`go.sum` 体积增大；
-- 数据：Kafka 中的历史消息不迁移，RocketMQ 的 topic 需要执行一次 `init-topics.sh`；
+- 数据：Kafka 中的历史消息不迁移，RocketMQ 的 topic 与消费组由 `broker` 容器的启动脚本自动创建；
 - 语义：可重试错误由服务端重投（默认 16 次）而不是本地重试 3 次；热度用 `ZINCRBY` 累加，重投会重复计分，与原先「处理成功后提交位点失败」的重放风险同类。
 
 ## 回滚方式

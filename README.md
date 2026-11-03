@@ -29,9 +29,7 @@ cp back/config/config.compose.example.yaml back/config/config.yaml
 docker compose up -d
 ```
 
-`docker compose up -d` 会先起 `namesrv` 与 `broker`，再跑一次性的 `rocketmq-init` 容器建好 topic 与消费组，最后才拉起 `backend`。初始化容器在 `docker compose ps` 里显示为 `Exited (0)` 属于正常。
-
-`rocketmq/init-topics.sh` 创建 9 个业务 topic、9 个 `<topic>_failed` 留档 topic 与 8 个消费组，命令可重复执行。RocketMQ 的 topic 名只允许字母数字与下划线，所以失败留档 topic 用下划线而非点号。
+`broker` 的启动脚本 `/home/rocketmq/start-broker.sh` 会在 Broker 于 NameServer 注册完成后，自动跑一遍 `init-topics.sh` 建 topic 与消费组，日志写在容器内的 `/home/rocketmq/init-topics.log`，不需要手工执行。脚本创建 9 个业务 topic、9 个 `<topic>_failed` 留档 topic 与 8 个消费组，命令可重复执行。RocketMQ 的 topic 名只允许字母数字与下划线，所以失败留档 topic 用下划线而非点号。
 
 四处凭据也可以留空，改用环境变量注入，compose 会把它们传给后端：`OSS_ACCESS_KEY_ID`、`OSS_ACCESS_KEY_SECRET`、`RAM_ACCESS_KEY_ID`、`RAM_ACCESS_KEY_SECRET`。留空时以配置文件里的值为准。
 
@@ -46,8 +44,7 @@ docker compose up -d
 - `mysql`：容器 `feed-mysql`，宿主机 `3307`
 - `redis`：容器 `feed-redis`，宿主机 `6380`
 - `namesrv`：容器 `feed-namesrv`，RocketMQ NameServer，宿主机 `9876`
-- `broker`：容器 `feed-broker`，RocketMQ Broker 内嵌 Proxy，只对外发布 gRPC `18080`
-- `rocketmq-init`：容器 `feed-rocketmq-init`，一次性任务，建 topic 与消费组后退出
+- `broker`：容器 `feed-broker`，RocketMQ Broker 内嵌 Proxy，只对外发布 gRPC `18080`，启动后自动初始化 topic 与消费组
 
 数据放在命名卷 `feed_video_mysql_data`、`feed_video_redis_data` 里，卷名带项目名，与容器名无关。
 
@@ -76,7 +73,7 @@ docker compose down -v               # 连数据卷一起删，下次启动是�
 - 后端起不来并打印「初始化消息生产者失败」：Proxy 没起来，或者 `rocketmq.endpoint` 的端口与 `rocketmq/proxy.conf` 里的 `grpcServerPort` 不一致
 - 上传凭证接口返回「直传服务未配置」：`ram` 段没填全，或者角色与子账号的信任关系没配好
 - 页面能打开但接口全部 401：`jwt.secret` 与 `access_token_minutes`、`refresh_token_hours` 没填好，令牌有效期为 0
-- 消息发出去但消费不动：先看 `docker logs feed-rocketmq-init`，初始化容器失败时 topic 没建全，生产者的路由查询会直接报 `TOPIC_NOT_FOUND`
+- 消息发出去但消费不动：先看 `docker exec feed-broker cat /home/rocketmq/init-topics.log`，初始化失败时 topic 没建全，生产者的路由查询会直接报 `TOPIC_NOT_FOUND`
 
 ## 五、可选：一键脚本
 
