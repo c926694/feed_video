@@ -109,9 +109,9 @@ func (c *Consumer) Run(ctx context.Context) error {
 	return nil
 }
 
-// dispatch 执行处理函数。不可重试的错误把原始消息转发到失败 topic 后确认消费，
-// 其余错误返回 FAILURE 交给服务端重投，重投耗尽后进入 "<分组>%DLQ%"。
-// 处理函数里的 panic 就地恢复，避免整组消费停摆。
+// dispatch 执行处理函数。不可重试的错误把原始消息转发到失败 topic 后确认消费；
+// 转发失败、处理失败以及处理函数里的 panic 都返回 FAILURE 交给服务端重投，
+// 重投耗尽后进入 "<分组>%DLQ%"。
 func (c *Consumer) dispatch(ctx context.Context, group string, byTopic map[string]subscription, view *rmq.MessageView) (result rmq.ConsumerResult) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -120,7 +120,7 @@ func (c *Consumer) dispatch(ctx context.Context, group string, byTopic map[strin
 				"message_id", view.GetMessageId(),
 				"panic", r,
 				"stack", string(debug.Stack()))
-			result = rmq.SUCCESS
+			result = rmq.FAILURE
 		}
 	}()
 
@@ -151,7 +151,8 @@ func (c *Consumer) dispatch(ctx context.Context, group string, byTopic map[strin
 		}
 		failedTopic := topic.FailedTopic(entry.name)
 		if pubErr := c.dlqProducer.PublishRaw(ctx, failedTopic, key, view.GetBody()); pubErr != nil {
-			slog.Error("转发失败消息失败", "topic", failedTopic, "error", pubErr)
+			slog.Error("转发失败消息失败，等待服务端重投", "topic", failedTopic, "error", pubErr)
+			return rmq.FAILURE
 		}
 		return rmq.SUCCESS
 	}
