@@ -11,9 +11,11 @@ CLUSTER="${CLUSTER_NAME:-DefaultCluster}"
 TOPICS=(
   video_created
   video_deleted
+  video_private_switched
   comment_created
   comment_deleted
   like_switched
+  favorite_switched
   follow_switched
   user_updated
 )
@@ -24,6 +26,9 @@ GROUPS=(
   feed_video_video
   feed_video_comment
   feed_video_feed
+  feed_video_like
+  feed_video_favorite
+  feed_video_message
 )
 
 for topic in "${TOPICS[@]}"; do

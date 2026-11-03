@@ -18,7 +18,7 @@ import (
 	messagerepo "simple_tiktok/internal/modules/message/repo"
 	userrepo "simple_tiktok/internal/modules/user/repo"
 	videorepo "simple_tiktok/internal/modules/video/repo"
-	"simple_tiktok/internal/platform/kafka/consumer"
+	"simple_tiktok/internal/platform/mq/consumer"
 	"simple_tiktok/internal/platform/upload"
 )
 

@@ -18,9 +18,9 @@ import (
 	videoevent "simple_tiktok/internal/modules/video/event"
 	videorepo "simple_tiktok/internal/modules/video/repo"
 	"simple_tiktok/internal/platform/httpx"
-	"simple_tiktok/internal/platform/kafka/consumer"
-	"simple_tiktok/internal/platform/kafka/producer"
-	"simple_tiktok/internal/platform/kafka/topic"
+	"simple_tiktok/internal/platform/mq/consumer"
+	"simple_tiktok/internal/platform/mq/producer"
+	"simple_tiktok/internal/platform/mq/topic"
 	"simple_tiktok/internal/platform/upload"
 )
 

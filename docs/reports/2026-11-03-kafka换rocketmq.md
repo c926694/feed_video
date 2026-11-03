@@ -95,7 +95,15 @@ rocketmq:
 
 ## 遗留项
 
-1. `/opt/feed_video/back` 的源码被同步成仓库版本，部署机原来的 `internal/platform/sts` 模块与 `/healthz` 路由没有保留，部署版 compose 里 `wget http://127.0.0.1:8081/healthz` 的健康检查会一直失败；要么从备份恢复这两处，要么把健康检查改成 `/videos/feed` 之类的真实接口。
-2. `brokerIP1=192.168.145.101` 是写死的，换机器部署要同步改 `rocketmq/broker.conf`。
-3. 生产建议用 `mqadmin updateTopic` 显式建 topic 并指定队列数，不依赖 `autoCreateTopicEnable`。
-4. 仓库 `docker-compose.yml` 没有给 backend 配健康检查，`/opt/feed_video` 的部署版有，后续需要统一。
+1. `brokerIP1=192.168.145.101` 是写死的，换机器部署要同步改 `rocketmq/broker.conf`。
+2. 生产建议用 `mqadmin updateTopic` 显式建 topic 并指定队列数，不依赖 `autoCreateTopicEnable`。
+
+## 合并对方分支（1b00f9d「部署」）的处理
+
+`d9c0537` 之后执行了 `git merge 1b00f9d`，产生 12 个文件冲突与 3 个 `DU` 的文件，处理方式如下：
+
+- 消息层：删除 `back/internal/platform/kafka/{consumer,producer,topic}`，全部改用 `back/internal/platform/mq`；
+- 12 个冲突文件：`config.go` 保留 `RocketMQConfig` 并合入对方的 `RAMConfig`；`svc/context.go` 用 `mq/producer` 并保留对方的 `sts`；`comment/router.go`、`user/router.go` 保留对方的 `videorepo` 并用 `mq`；`follow/logic.go`、`like/logic.go`、`video/logic.go` 用 `mq` 并保留对方新增的 `upload`、`sts`；`go.mod` 同时保留 `rocketmq-clients`、`alibaba-cloud-sdk-go`、`golang-migrate` 与对方的 `opentracing`；`go.sum` 由 `go mod tidy` 重新生成；`README.md` 按对方的五节结构重写并替换为 RocketMQ 内容；`docker-compose.yml` 保留对方的 `container_name`、backend 健康检查与 RAM 环境变量，服务段换成 namesrv + broker；
+- 对方新增的 `favorite`、`message` 模块以及 `like/router.go` 的 import 一并改成 `platform/mq`；
+- topic 扩到 9 个（新增 `video_private_switched`、`favorite_switched`），消费组扩到 8 个（新增 `feed_video_like`、`feed_video_favorite`、`feed_video_message`），`rocketmq/init-topics.sh` 同步更新；
+- 验证：`go build ./...` 与 `go vet ./...` 均通过，`git status` 没有未解决冲突，合并尚未提交。
