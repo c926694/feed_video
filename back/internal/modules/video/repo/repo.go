@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -13,45 +12,57 @@ import (
 
 const (
 	infoCacheKeyFormat = "cache:video:info:%d"
-	infoLockKeyFormat  = "lock:video:info:%d"
 	infoPhysicalTTL    = 24 * time.Hour
+	infoMissTTL        = 2 * time.Minute
+)
+
+// 视频发布状态
+const (
+	StatusCreated   = "created"   // 已创建，文件上传中
+	StatusPublished = "published" // 已发布，公开可见
+	StatusFailed    = "failed"    // 上传失败
+	StatusPrivate   = "private"   // 已发布后设为私密，只有作者可见
 )
 
 // Video video 表
 type Video struct {
-	ID           uint64    `gorm:"primaryKey"`
-	AuthorID     uint64    `gorm:"index;not null;"`
-	AuthorName   string    `gorm:"size:255;not null;"`
-	AuthorAvatar string    `gorm:"size:255"`
-	PlayURL      string    `gorm:"size:255;not null"`
-	CoverURL     string    `gorm:"size:255;not null"`
-	Title        string    `gorm:"size:255;not null"`
-	Description  string    `gorm:"type:text"`
-	LikeCount    int64     `gorm:"default:0"`
-	CommentCount int64     `gorm:"default:0"`
-	CreatedAt    time.Time `gorm:"index" gorm:"autoCreateTime;not null"`
-	UpdatedAt    time.Time `json:"updated_at" gorm:"autoUpdateTime;not null"`
+	ID            uint64    `gorm:"primaryKey"`
+	AuthorID      uint64    `gorm:"index;not null;"`
+	AuthorName    string    `gorm:"size:255;not null;"`
+	AuthorAvatar  string    `gorm:"size:255"`
+	PlayURL       string    `gorm:"size:255;not null"`
+	CoverURL      string    `gorm:"size:255;not null"`
+	Title         string    `gorm:"size:255;not null"`
+	Description   string    `gorm:"type:text"`
+	LikeCount     int64     `gorm:"default:0"`
+	CommentCount  int64     `gorm:"default:0"`
+	FavoriteCount int64     `gorm:"default:0"`
+	Status        string    `gorm:"column:status;size:16;not null;default:published"`
+	RequestID     string    `gorm:"column:request_id;size:64"`
+	CreateTime    time.Time `gorm:"column:created_at;default:CURRENT_TIMESTAMP(3)" json:"created_at"`
+	UpdateTime    time.Time `gorm:"column:updated_at;default:CURRENT_TIMESTAMP(3)" json:"updated_at"`
 }
 
-// InfoCacheEntry 视频信息缓存里的一条记录
+// InfoCacheEntry 视频详情缓存里的一条记录
 type InfoCacheEntry struct {
-	ID           uint64    `json:"id"`
-	AuthorID     uint64    `json:"author_id"`
-	AuthorName   string    `json:"author_name"`
-	AuthorAvatar string    `json:"author_avatar"`
-	Title        string    `json:"title"`
-	Description  string    `json:"description"`
-	CoverURL     string    `json:"cover_url"`
-	PlayURL      string    `json:"play_url"`
-	LikeCount    int64     `json:"like_count"`
-	CommentCount int64     `json:"comment_count"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID            uint64    `json:"id"`
+	AuthorID      uint64    `json:"author_id"`
+	AuthorName    string    `json:"author_name"`
+	AuthorAvatar  string    `json:"author_avatar"`
+	Title         string    `json:"title"`
+	Description   string    `json:"description"`
+	CoverURL      string    `json:"cover_url"`
+	PlayURL       string    `json:"play_url"`
+	LikeCount     int64     `json:"like_count"`
+	CommentCount  int64     `json:"comment_count"`
+	FavoriteCount int64     `json:"favorite_count"`
+	Status        string    `json:"status"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
-// InfoCache 带逻辑过期时间的缓存记录，Empty 表示这是一个空值缓存
+// InfoCache 带逻辑过期时间的详情缓存记录
 type InfoCache struct {
 	Entry    *InfoCacheEntry `json:"data,omitempty"`
-	Empty    bool            `json:"empty"`
 	ExpireAt int64           `json:"expire_at"`
 }
 
@@ -77,43 +88,80 @@ func (r *Repo) GetByID(ctx context.Context, videoID uint64) (*Video, error) {
 	return &item, nil
 }
 
+// GetByRequestID 按请求 ID 查作者的发布记录，用于重复创建判重
+func (r *Repo) GetByRequestID(ctx context.Context, authorID uint64, requestID string) (*Video, error) {
+	var item Video
+	if err := r.db.WithContext(ctx).Where("author_id = ? AND request_id = ?", authorID, requestID).First(&item).Error; err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
+// FilterByIDs 按 ID 批量取已发布的视频，供热榜按有序集合给出的顺序回表
 func (r *Repo) FilterByIDs(ctx context.Context, videoIDs []uint64) ([]Video, error) {
 	if len(videoIDs) == 0 {
 		return []Video{}, nil
 	}
 	items := make([]Video, 0, len(videoIDs))
-	if err := r.db.WithContext(ctx).Where("id in ?", videoIDs).Find(&items).Error; err != nil {
+	if err := r.db.WithContext(ctx).
+		Where("id in ? and status = ?", videoIDs, StatusPublished).
+		Find(&items).Error; err != nil {
 		return nil, err
 	}
 	return items, nil
 }
 
-func (r *Repo) ListByAuthor(ctx context.Context, authorID uint64, limit uint64) ([]Video, error) {
+// ListByAuthor 作者的全部视频（含未发布与私密），双字段游标分页，第一页 lastID 传 0
+func (r *Repo) ListByAuthor(ctx context.Context, authorID uint64, limit uint64, lastCreatedAt time.Time, lastID uint64) ([]Video, error) {
 	items := make([]Video, 0, limit)
-	err := r.db.WithContext(ctx).
-		Where("author_id = ?", authorID).
-		Order("created_at desc").
-		Limit(int(limit)).
-		Find(&items).Error
+	query := r.db.WithContext(ctx).Where("author_id = ?", authorID)
+	if lastID > 0 {
+		query = query.Where("created_at <= ? AND id < ?", lastCreatedAt, lastID)
+	}
+	err := query.Order("created_at desc, id desc").Limit(int(limit)).Find(&items).Error
 	return items, err
+}
+
+// ListIDsByAuthor 按作者列出最近发布的视频 ID，供资料变更时批量清理缓存
+func (r *Repo) ListIDsByAuthor(ctx context.Context, authorID uint64, limit int) ([]uint64, error) {
+	ids := make([]uint64, 0, limit)
+	err := r.db.WithContext(ctx).Model(&Video{}).
+		Where("author_id = ?", authorID).
+		Order("id desc").
+		Limit(limit).
+		Pluck("id", &ids).Error
+	return ids, err
 }
 
 func (r *Repo) CountByAuthor(ctx context.Context, authorID uint64) (int64, error) {
 	var count int64
-	err := r.db.WithContext(ctx).Model(&Video{}).Where("author_id = ?", authorID).Count(&count).Error
+	err := r.db.WithContext(ctx).Model(&Video{}).
+		Where("author_id = ? AND status = ?", authorID, StatusPublished).Count(&count).Error
 	return count, err
 }
 
-func (r *Repo) ListByAuthorsBefore(ctx context.Context, authorIDs []uint64, limit uint64, before *time.Time) ([]Video, error) {
+// ListByAuthorsBefore 关注流分页：作者集合内按发布时间倒序，双字段游标定位，第一页 lastID 传 0
+func (r *Repo) ListByAuthorsBefore(ctx context.Context, authorIDs []uint64, limit uint64, lastCreatedAt time.Time, lastID uint64) ([]Video, error) {
 	if len(authorIDs) == 0 {
 		return []Video{}, nil
 	}
 	items := make([]Video, 0, limit)
-	query := r.db.WithContext(ctx).Model(&Video{}).Where("author_id in ?", authorIDs)
-	if before != nil {
-		query = query.Where("created_at < ?", *before)
+	query := r.db.WithContext(ctx).Model(&Video{}).Where("author_id in ? AND status = ?", authorIDs, StatusPublished)
+	if lastID > 0 {
+		query = query.Where("created_at <= ? AND id < ?", lastCreatedAt, lastID)
 	}
-	err := query.Order("created_at desc").Limit(int(limit)).Find(&items).Error
+	err := query.Order("created_at desc, id desc").Limit(int(limit)).Find(&items).Error
+	return items, err
+}
+
+// ListFeedPage 推荐流分页：全表按发布时间倒序，双字段游标定位，第一页 lastID 传 0
+func (r *Repo) ListFeedPage(ctx context.Context, limit uint64, lastCreatedAt time.Time, lastID uint64) ([]Video, error) {
+	items := make([]Video, 0, limit)
+	query := r.db.WithContext(ctx).Model(&Video{}).Where("status = ?", StatusPublished)
+	if lastID > 0 {
+		query = query.Where("created_at <= ? AND id < ?", lastCreatedAt, lastID)
+	}
+	err := query.Order("created_at desc, id desc").Limit(int(limit)).Find(&items).Error
 	return items, err
 }
 
@@ -121,24 +169,27 @@ func (r *Repo) Delete(ctx context.Context, videoID uint64) error {
 	return r.db.WithContext(ctx).Delete(&Video{}, videoID).Error
 }
 
-func (r *Repo) IncreaseLikeCount(ctx context.Context, videoID uint64) error {
-	return r.db.WithContext(ctx).Model(&Video{}).Where("id = ?", videoID).
-		Update("like_count", gorm.Expr("like_count + 1")).Error
+// MarkStatus 条件更新发布状态，只允许从 from 迁移到 to，返回是否发生了迁移
+func (r *Repo) MarkStatus(ctx context.Context, videoID uint64, authorID uint64, from string, to string) (bool, error) {
+	result := r.db.WithContext(ctx).Model(&Video{}).
+		Where("id = ? AND author_id = ? AND status = ?", videoID, authorID, from).
+		Update("status", to)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected == 1, nil
 }
 
-func (r *Repo) DecreaseLikeCount(ctx context.Context, videoID uint64) error {
+// SyncLikeCount 按实际点赞数对账视频点赞数
+func (r *Repo) SyncLikeCount(ctx context.Context, videoID uint64, count int64) error {
 	return r.db.WithContext(ctx).Model(&Video{}).Where("id = ?", videoID).
-		Update("like_count", gorm.Expr("CASE WHEN like_count > 0 THEN like_count - 1 ELSE 0 END")).Error
+		Update("like_count", count).Error
 }
 
-func (r *Repo) IncreaseCommentCount(ctx context.Context, videoID uint64) error {
+// SyncFavoriteCount 按实际收藏数对账视频收藏数
+func (r *Repo) SyncFavoriteCount(ctx context.Context, videoID uint64, count int64) error {
 	return r.db.WithContext(ctx).Model(&Video{}).Where("id = ?", videoID).
-		Update("comment_count", gorm.Expr("comment_count + 1")).Error
-}
-
-func (r *Repo) DecreaseCommentCount(ctx context.Context, videoID uint64) error {
-	return r.db.WithContext(ctx).Model(&Video{}).Where("id = ?", videoID).
-		Update("comment_count", gorm.Expr("CASE WHEN comment_count > 0 THEN comment_count - 1 ELSE 0 END")).Error
+		Update("favorite_count", count).Error
 }
 
 // UpdateAuthorInfo 刷新某个作者全部视频上冗余的展示字段
@@ -150,21 +201,31 @@ func (r *Repo) UpdateAuthorInfo(ctx context.Context, authorID uint64, authorName
 	return r.db.WithContext(ctx).Model(&Video{}).Where("author_id = ?", authorID).Updates(updates).Error
 }
 
-// GetInfoCache 读取视频信息缓存，返回 nil 表示缓存里没有
-func (r *Repo) GetInfoCache(ctx context.Context, videoID uint64) (*InfoCache, error) {
+// GetInfoCache 读详情缓存，返回三种状态：
+// found 为 false 表示键不存在，需要回源；
+// found 为 true 且 record 为 nil 表示空值标记，MySQL 里没有这一行；
+// found 为 true 且 record 非 nil 表示缓存命中。
+func (r *Repo) GetInfoCache(ctx context.Context, videoID uint64) (*InfoCache, bool, error) {
 	raw, err := r.redisClient.Get(ctx, infoCacheKey(videoID)).Result()
 	if err == redis.Nil {
-		return nil, nil
+		return nil, false, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	var cache InfoCache
-	if err = json.Unmarshal([]byte(raw), &cache); err != nil {
+	if raw == "" {
+		return nil, true, nil
+	}
+	var record InfoCache
+	if unmarshalErr := json.Unmarshal([]byte(raw), &record); unmarshalErr != nil {
 		_ = r.redisClient.Del(ctx, infoCacheKey(videoID)).Err()
-		return nil, nil
+		return nil, false, nil
 	}
-	return &cache, nil
+	if record.Entry == nil {
+		// Entry 为 nil 的历史空值记录按空值标记处理
+		return nil, true, nil
+	}
+	return &record, true, nil
 }
 
 // SetInfoCache 写入视频信息缓存，实际有效期远长于记录里的逻辑过期时间
@@ -176,37 +237,28 @@ func (r *Repo) SetInfoCache(ctx context.Context, videoID uint64, cache InfoCache
 	return r.redisClient.Set(ctx, infoCacheKey(videoID), data, infoPhysicalTTL).Err()
 }
 
-// DeleteInfoCache 让缓存失效
+// SetInfoMiss 键不存在时写空值标记，纯物理过期，不需要逻辑过期
+func (r *Repo) SetInfoMiss(ctx context.Context, videoID uint64) error {
+	return r.redisClient.Set(ctx, infoCacheKey(videoID), "", infoMissTTL).Err()
+}
+
+// DeleteInfoCache 让详情缓存失效
 func (r *Repo) DeleteInfoCache(ctx context.Context, videoID uint64) error {
 	return r.redisClient.Del(ctx, infoCacheKey(videoID)).Err()
 }
 
-// TryLockRebuild 尝试取到重建缓存的锁，返回的 token 用于解锁
-func (r *Repo) TryLockRebuild(ctx context.Context, videoID uint64, ttl time.Duration) (string, bool, error) {
-	token := strconv.FormatInt(time.Now().UnixNano(), 10)
-	locked, err := r.redisClient.SetNX(ctx, infoLockKey(videoID), token, ttl).Result()
-	if err != nil {
-		return "", false, err
+// DeleteInfoCacheBatch 批量删除详情缓存，用于资料变更时清理该作者全部视频
+func (r *Repo) DeleteInfoCacheBatch(ctx context.Context, videoIDs []uint64) error {
+	if len(videoIDs) == 0 {
+		return nil
 	}
-	return token, locked, nil
+	keys := make([]string, 0, len(videoIDs))
+	for _, videoID := range videoIDs {
+		keys = append(keys, infoCacheKey(videoID))
+	}
+	return r.redisClient.Del(ctx, keys...).Err()
 }
-
-// UnlockRebuild 释放重建缓存的锁，只有持有同一个 token 时才真正删除
-func (r *Repo) UnlockRebuild(ctx context.Context, videoID uint64, token string) error {
-	return unlockScript.Run(ctx, r.redisClient, []string{infoLockKey(videoID)}, token).Err()
-}
-
-var unlockScript = redis.NewScript(`
-if redis.call("GET", KEYS[1]) == ARGV[1] then
-    return redis.call("DEL", KEYS[1])
-end
-return 0
-`)
 
 func infoCacheKey(videoID uint64) string {
 	return fmt.Sprintf(infoCacheKeyFormat, videoID)
-}
-
-func infoLockKey(videoID uint64) string {
-	return fmt.Sprintf(infoLockKeyFormat, videoID)
 }

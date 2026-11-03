@@ -1,4 +1,4 @@
-﻿import type { RawComment, RawUser, RawVideo } from "@/types/backend";
+import type { RawComment, RawUser, RawVideo } from "@/types/backend";
 import type { Comment, User, Video } from "@/types/domain";
 
 function toNumber(value: unknown, fallback = 0) {
@@ -20,7 +20,8 @@ export function normalizeUser(raw?: RawUser | null): User {
     bio: toString(raw?.signature ?? raw?.bio, "这个人很神秘，什么都没写。"),
     followCount: toNumber(raw?.follow_count),
     followerCount: toNumber(raw?.follower_count),
-    videoCount: toNumber(raw?.video_count)
+    videoCount: toNumber(raw?.video_count),
+    followed: Boolean(raw?.is_follow)
   };
 }
 
@@ -37,10 +38,13 @@ export function normalizeVideo(raw?: RawVideo | null): Video {
     coverUrl: toString(raw?.cover ?? raw?.cover_url ?? raw?.coverURL),
     playUrl: toString(raw?.play ?? raw?.play_url ?? raw?.playURL),
     createdAt: toString(raw?.created_at),
-    likeCount: toNumber(raw?.like_count ?? raw?.favorite_count),
+    likeCount: toNumber(raw?.like_count),
     commentCount: toNumber(raw?.comment_count),
+    favoriteCount: toNumber(raw?.favorite_count),
     liked: Boolean(raw?.is_liked ?? raw?.is_favorite),
+    favorited: Boolean(raw?.is_favorited),
     followed: Boolean(raw?.is_follow),
+    status: toString(raw?.status, "published"),
     author: normalizeUser(raw?.author ?? raw?.user ?? authorFallback),
     score: raw?.score ? String(raw.score) : undefined
   };
@@ -58,7 +62,11 @@ export function normalizeComment(raw?: RawComment | null): Comment {
     likeCount: toNumber(raw?.like_count ?? raw?.favorite_count),
     liked: Boolean(raw?.is_liked ?? raw?.is_favorite),
     createdAt: toString(raw?.created_at),
-    author: normalizeUser(raw?.author ?? raw?.user ?? fallbackAuthor)
+    author: normalizeUser(raw?.author ?? raw?.user ?? fallbackAuthor),
+    parentId: toNumber(raw?.parent_id),
+    replyToUserId: toNumber(raw?.reply_to_user_id),
+    replyToUserName: toString(raw?.reply_to_user_name),
+    replyCount: toNumber(raw?.reply_count)
   };
 }
 
@@ -67,4 +75,14 @@ export function unwrapData<T>(payload: unknown): T {
     return (payload as { data: T }).data;
   }
   return payload as T;
+}
+
+// 视频列表接口的返回里列表字段名不统一，按出现顺序挑第一个数组
+export function pickVideoList(source: unknown): RawVideo[] {
+  if (Array.isArray(source)) return source as RawVideo[];
+  if (!source || typeof source !== "object") return [];
+  const payload = source as Record<string, unknown>;
+  const candidates = [payload.list, payload.items, payload.videos, payload.video_list, payload.feed_video_list];
+  const found = candidates.find((entry) => Array.isArray(entry));
+  return (found as RawVideo[] | undefined) ?? [];
 }

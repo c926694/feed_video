@@ -12,9 +12,11 @@ import (
 	"gorm.io/gorm"
 
 	followevent "simple_tiktok/internal/modules/follow/event"
+	followrepo "simple_tiktok/internal/modules/follow/repo"
 	userevent "simple_tiktok/internal/modules/user/event"
 	userrepo "simple_tiktok/internal/modules/user/repo"
 	videoevent "simple_tiktok/internal/modules/video/event"
+	videorepo "simple_tiktok/internal/modules/video/repo"
 	"simple_tiktok/internal/pkg/hash_password"
 	"simple_tiktok/internal/platform/auth"
 	"simple_tiktok/internal/platform/httpx"
@@ -24,9 +26,11 @@ import (
 	"simple_tiktok/internal/platform/upload"
 )
 
-// Logic 用户模块的业务逻辑。视频数量、关注计数都保存在自己的表里，由事件维护。
+// Logic 用户模块的业务逻辑。视频数量、关注计数都保存在自己的表里，由事件按实际数据对账。
 type Logic struct {
 	users    *userrepo.Repo
+	follows  *followrepo.Repo
+	videos   *videorepo.Repo
 	auth     *auth.Service
 	uploader *upload.Uploader
 	producer *producer.Producer
@@ -70,7 +74,8 @@ func (l *Logic) Login(ctx context.Context, username string, password string) (au
 	return l.auth.Issue(ctx, item.ID)
 }
 
-func (l *Logic) GetInfo(ctx context.Context, userID uint64) (*InfoRes, error) {
+// GetInfo 取用户资料，viewerID 是发起请求的人，用来判断他是否关注了这个用户
+func (l *Logic) GetInfo(ctx context.Context, userID uint64, viewerID uint64) (*InfoRes, error) {
 	item, err := l.users.GetByID(ctx, userID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -78,7 +83,23 @@ func (l *Logic) GetInfo(ctx context.Context, userID uint64) (*InfoRes, error) {
 		}
 		return nil, err
 	}
-	return l.toInfoRes(item), nil
+	followed, err := l.isFollowing(ctx, viewerID, userID)
+	if err != nil {
+		return nil, err
+	}
+	return l.toInfoRes(item, followed), nil
+}
+
+// isFollowing 判断 viewerID 是否关注了 userID，看自己的资料时恒为 false
+func (l *Logic) isFollowing(ctx context.Context, viewerID uint64, userID uint64) (bool, error) {
+	if viewerID == 0 || viewerID == userID {
+		return false, nil
+	}
+	following, err := l.follows.FilterFollowing(ctx, viewerID, []uint64{userID})
+	if err != nil {
+		return false, err
+	}
+	return following[userID], nil
 }
 
 func (l *Logic) UpdateProfile(ctx context.Context, userID uint64, nickname string, avatar *multipart.FileHeader) (*InfoRes, error) {
@@ -130,7 +151,7 @@ func (l *Logic) UpdateProfile(ctx context.Context, userID uint64, nickname strin
 		return nil, err
 	}
 
-	return l.toInfoRes(updated), nil
+	return l.toInfoRes(updated, false), nil
 }
 
 // Refresh 用 refresh token 换一对新令牌
@@ -153,24 +174,28 @@ func (l *Logic) HandleFollowSwitched(ctx context.Context, payload []byte) error 
 		return consumer.Permanent(errors.New("关注事件里缺少用户 ID"))
 	}
 
-	var err error
-	if switched.Followed {
-		if err = l.users.IncreaseFollowCount(ctx, switched.Follower); err == nil {
-			err = l.users.IncreaseFollowerCount(ctx, switched.Following)
-		}
-	} else {
-		if err = l.users.DecreaseFollowCount(ctx, switched.Follower); err == nil {
-			err = l.users.DecreaseFollowerCount(ctx, switched.Following)
-		}
-	}
+	followingCount, err := l.follows.CountFollowing(ctx, switched.Follower)
 	if err != nil {
-		slog.Error("更新关注计数失败", "follower", switched.Follower, "following", switched.Following, "error", err)
+		slog.Error("统计关注数失败", "follower", switched.Follower, "error", err)
+		return err
+	}
+	if err = l.users.SyncFollowCount(ctx, switched.Follower, followingCount); err != nil {
+		slog.Error("对账关注数失败", "follower", switched.Follower, "error", err)
+		return err
+	}
+	followerCount, err := l.follows.CountFollowers(ctx, switched.Following)
+	if err != nil {
+		slog.Error("统计粉丝数失败", "following", switched.Following, "error", err)
+		return err
+	}
+	if err = l.users.SyncFollowerCount(ctx, switched.Following, followerCount); err != nil {
+		slog.Error("对账粉丝数失败", "following", switched.Following, "error", err)
 		return err
 	}
 	return nil
 }
 
-// HandleVideoCreated 订阅视频创建事件，视频数量加一
+// HandleVideoCreated 订阅视频创建事件，按实际视频数对账
 func (l *Logic) HandleVideoCreated(ctx context.Context, payload []byte) error {
 	var created videoevent.CreatedEvent
 	if err := json.Unmarshal(payload, &created); err != nil {
@@ -179,14 +204,10 @@ func (l *Logic) HandleVideoCreated(ctx context.Context, payload []byte) error {
 	if created.AuthorID == 0 {
 		return consumer.Permanent(errors.New("视频创建事件里没有 authorId"))
 	}
-	if err := l.users.IncreaseVideoCount(ctx, created.AuthorID); err != nil {
-		slog.Error("更新视频数量失败", "author_id", created.AuthorID, "error", err)
-		return err
-	}
-	return nil
+	return l.syncVideoCount(ctx, created.AuthorID)
 }
 
-// HandleVideoDeleted 订阅视频删除事件，视频数量减一
+// HandleVideoDeleted 订阅视频删除事件，按实际视频数对账
 func (l *Logic) HandleVideoDeleted(ctx context.Context, payload []byte) error {
 	var deleted videoevent.DeletedEvent
 	if err := json.Unmarshal(payload, &deleted); err != nil {
@@ -195,14 +216,37 @@ func (l *Logic) HandleVideoDeleted(ctx context.Context, payload []byte) error {
 	if deleted.AuthorID == 0 {
 		return consumer.Permanent(errors.New("删除视频事件里没有 authorId"))
 	}
-	if err := l.users.DecreaseVideoCount(ctx, deleted.AuthorID); err != nil {
-		slog.Error("更新视频数量失败", "author_id", deleted.AuthorID, "error", err)
+	return l.syncVideoCount(ctx, deleted.AuthorID)
+}
+
+// HandleVideoPrivateSwitched 订阅视频公开与私密切换事件。
+// 视频数按公开口径统计，所以两种方向的切换都要重新对账，属于重算这一类
+func (l *Logic) HandleVideoPrivateSwitched(ctx context.Context, payload []byte) error {
+	var switched videoevent.PrivateSwitchedEvent
+	if err := json.Unmarshal(payload, &switched); err != nil {
+		return consumer.Permanent(err)
+	}
+	if switched.AuthorID == 0 {
+		return consumer.Permanent(errors.New("视频私密切换事件里没有 authorId"))
+	}
+	return l.syncVideoCount(ctx, switched.AuthorID)
+}
+
+// syncVideoCount 按视频表实际行数对账用户视频数
+func (l *Logic) syncVideoCount(ctx context.Context, userID uint64) error {
+	count, err := l.videos.CountByAuthor(ctx, userID)
+	if err != nil {
+		slog.Error("统计视频数失败", "author_id", userID, "error", err)
+		return err
+	}
+	if err = l.users.SyncVideoCount(ctx, userID, count); err != nil {
+		slog.Error("对账视频数失败", "author_id", userID, "error", err)
 		return err
 	}
 	return nil
 }
 
-func (l *Logic) toInfoRes(item *userrepo.User) *InfoRes {
+func (l *Logic) toInfoRes(item *userrepo.User, isFollow bool) *InfoRes {
 	return &InfoRes{
 		UserID:        item.ID,
 		Username:      item.Username,
@@ -211,6 +255,7 @@ func (l *Logic) toInfoRes(item *userrepo.User) *InfoRes {
 		FollowCount:   item.FollowCount,
 		FollowerCount: item.FollowerCount,
 		VideoCount:    item.VideoCount,
+		IsFollow:      isFollow,
 	}
 }
 

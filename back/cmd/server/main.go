@@ -16,9 +16,11 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"simple_tiktok/internal/modules/comment"
+	"simple_tiktok/internal/modules/favorite"
 	"simple_tiktok/internal/modules/feed"
 	"simple_tiktok/internal/modules/follow"
 	"simple_tiktok/internal/modules/like"
+	"simple_tiktok/internal/modules/message"
 	"simple_tiktok/internal/modules/user"
 	"simple_tiktok/internal/modules/video"
 	"simple_tiktok/internal/platform/auth"
@@ -29,6 +31,7 @@ import (
 	"simple_tiktok/internal/platform/mq/topic"
 	"simple_tiktok/internal/platform/mysql"
 	"simple_tiktok/internal/platform/redis"
+	"simple_tiktok/internal/platform/sts"
 	"simple_tiktok/internal/platform/upload"
 	"simple_tiktok/internal/svc"
 )
@@ -95,10 +98,13 @@ func main() {
 		Producer: eventProducer,
 		Auth:     authService,
 		Upload:   uploader,
+		Sts:      sts.New(cfg.RAM),
 	}
 
 	gin.SetMode(cfg.Server.Mode)
-	r := gin.Default()
+	r := gin.New()
+	// 存活探测每十几秒一次，日志里跳过它，其余请求照常记录
+	r.Use(gin.LoggerWithConfig(gin.LoggerConfig{SkipPaths: []string{"/healthz"}}), gin.Recovery())
 	// 允许前端开发服务器跨域访问
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     cfg.Server.AllowOrigins,
@@ -110,6 +116,10 @@ func main() {
 		MaxAge:           12 * time.Hour,
 	}))
 	r.HandleMethodNotAllowed = true
+	// 存活探测：不需要鉴权，供容器健康检查使用
+	r.GET("/healthz", func(c *gin.Context) {
+		c.String(http.StatusOK, "ok")
+	})
 	r.NoRoute(func(c *gin.Context) {
 		httpx.Fail(c, httpx.New(httpx.CodeNotFound, "接口不存在"))
 	})
@@ -121,10 +131,12 @@ func main() {
 	httpRegistrations := []func(*gin.Engine, *svc.ServiceContext) (*gin.Engine, error){
 		user.RegisterHTTP,
 		like.RegisterHTTP,
+		favorite.RegisterHTTP,
 		follow.RegisterHTTP,
 		video.RegisterHTTP,
 		comment.RegisterHTTP,
 		feed.RegisterHTTP,
+		message.RegisterHTTP,
 	}
 	for _, register := range httpRegistrations {
 		if _, err = register(r, serviceCtx); err != nil {
@@ -144,6 +156,9 @@ func main() {
 		{video.Name, video.RegisterConsumers},
 		{comment.Name, comment.RegisterConsumers},
 		{feed.Name, feed.RegisterConsumers},
+		{like.Name, like.RegisterConsumers},
+		{favorite.Name, favorite.RegisterConsumers},
+		{message.Name, message.RegisterConsumers},
 	}
 	for _, item := range consumerRegistrations {
 		eventConsumer := consumer.New(cfg.RocketMQ.Endpoint, cfg.RocketMQ.AccessKey, cfg.RocketMQ.AccessSecret, cfg.RocketMQ.GroupID, item.subscriber, eventProducer)

@@ -1,15 +1,18 @@
-﻿<template>
-  <main ref="containerRef" class="feed-container" @scroll.passive="onScroll">
+<template>
+  <main ref="containerRef" class="feed-container" @scroll.passive="onScroll" @wheel="onWheel">
     <VideoCard
       v-for="(video, idx) in displayVideos"
       :key="`${video.id}-${idx}`"
       :video="video"
       :active="idx === activeIndex"
+      :in-window="Math.abs(idx - activeIndex) <= 1"
       :framed="true"
       @toggle-like="toggleLike(video.id)"
+      @toggle-favorite="toggleFavorite(video.id)"
       @toggle-follow="toggleFollow(video.author.id)"
       @open-comment="openComment(video.id)"
       @share="shareVideo(video)"
+      @open-profile="openProfile(video.author.id)"
     />
 
     <div v-if="loading" class="loading">加载中...</div>
@@ -35,11 +38,14 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
-import { fetchFeedVideos, fetchFollowVideos, fetchHotVideos, switchFollow, switchVideoLike } from "@/api";
+import { useRouter } from "vue-router";
+import { fetchFeedVideos, fetchFollowVideos, fetchHotVideos } from "@/api";
 import CommentDrawer from "@/components/feed/CommentDrawer.vue";
 import VideoCard from "@/components/feed/VideoCard.vue";
 import type { Video } from "@/types/domain";
 import { useToast } from "@/composables/useToast";
+import { useVideoActions } from "@/composables/useVideoActions";
+import { dedupeById } from "@/utils/collections";
 
 const { showToast } = useToast();
 type FeedTab = "recommend" | "follow" | "hot";
@@ -57,12 +63,17 @@ const props = withDefaults(
 );
 
 const containerRef = ref<HTMLElement | null>(null);
+const router = useRouter();
 const loading = ref(false);
 const recommendVideos = ref<Video[]>([]);
 const followVideos = ref<Video[]>([]);
 const hotVideos = ref<Video[]>([]);
-const currentScoreRecommend = ref("");
-const currentScoreFollow = ref("");
+interface FeedCursor {
+  createdAt: number;
+  id: number;
+}
+const recommendCursor = ref<FeedCursor | null>(null);
+const followCursor = ref<FeedCursor | null>(null);
 const hotNextOffset = ref(0);
 const hotHasMore = ref(true);
 const hotInterval = 60;
@@ -71,6 +82,20 @@ const activeIndex = ref(0);
 const commentOpen = ref(false);
 const commentVideoId = ref(0);
 
+// 点赞、收藏、关注三个动作共用一份实现，三个列表一起写回。
+// 关注变化后关注流的内容会变，所以重新拉一次
+const actions = useVideoActions(
+  () => [recommendVideos.value, followVideos.value, hotVideos.value],
+  async (action) => {
+    if (action !== "follow") return;
+    followCursor.value = null;
+    followVideos.value = [];
+    if (props.tab === "follow") {
+      await loadFollowInitial();
+    }
+  }
+);
+
 const displayVideos = computed(() => {
   if (props.tab === "recommend") return recommendVideos.value;
   if (props.tab === "follow") return followVideos.value;
@@ -78,10 +103,10 @@ const displayVideos = computed(() => {
   return recommendVideos.value;
 });
 const currentNextScore = computed(() => {
-  if (props.tab === "recommend") return currentScoreRecommend.value;
-  if (props.tab === "follow") return currentScoreFollow.value;
+  if (props.tab === "recommend") return recommendCursor.value ? "1" : "";
+  if (props.tab === "follow") return followCursor.value ? "1" : "";
   if (props.tab === "hot") return hotHasMore.value ? "1" : "";
-  return currentScoreRecommend.value;
+  return recommendCursor.value ? "1" : "";
 });
 const showEndTip = computed(
   () =>
@@ -127,7 +152,7 @@ async function loadInitial() {
 
     const feed = await fetchFeedVideos({ limit: 5 });
     recommendVideos.value = feed.videos;
-    currentScoreRecommend.value = feed.nextScore;
+    recommendCursor.value = feed.nextId ? { createdAt: feed.nextCreatedAt, id: feed.nextId } : null;
 
     if (!recommendVideos.value.length) {
       const hot = await fetchHotVideos({
@@ -166,13 +191,43 @@ function upsertVideosKeepOrder(base: Video[], incoming: Video[]) {
   return result;
 }
 
-function scrollToIndex(index: number) {
-  const node = containerRef.value;
+// scrollToIndex 定位到某一条。用户主动切换时用 smooth 让方向可见，
+// 从热榜点进某条播放时用 auto，直接停在目标上，不播放滚动过程
+function scrollToIndex(index: number, behavior: ScrollBehavior = "smooth") {  const node = containerRef.value;
   if (!node) return;
   node.scrollTo({
     top: index * node.clientHeight,
-    behavior: "auto"
+    behavior
   });
+}
+
+let isWheeling = false;
+
+function onWheel(event: WheelEvent) {
+  if (Math.abs(event.deltaY) < 18) return;
+  if (isWheeling) {
+    event.preventDefault();
+    return;
+  }
+  if (event.deltaY > 0) {
+    if (activeIndex.value < displayVideos.value.length - 1) {
+      event.preventDefault();
+      isWheeling = true;
+      switchNext();
+      setTimeout(() => {
+        isWheeling = false;
+      }, 400);
+    }
+  } else if (event.deltaY < 0) {
+    if (activeIndex.value > 0) {
+      event.preventDefault();
+      isWheeling = true;
+      switchPrev();
+      setTimeout(() => {
+        isWheeling = false;
+      }, 400);
+    }
+  }
 }
 
 async function alignHotStartVideo() {
@@ -181,7 +236,7 @@ async function alignHotStartVideo() {
   if (targetIndex < 0) return;
   activeIndex.value = targetIndex;
   await nextTick();
-  scrollToIndex(targetIndex);
+  scrollToIndex(targetIndex, "auto");
 }
 
 function switchPrev() {
@@ -203,10 +258,14 @@ async function loadMore() {
   loading.value = true;
   try {
     if (props.tab === "follow") {
-      if (!currentScoreFollow.value) return;
-      const follow = await fetchFollowVideos({ limit: 5, lastScore: currentScoreFollow.value });
+      if (!followCursor.value) return;
+      const follow = await fetchFollowVideos({
+        limit: 5,
+        lastCreatedAt: followCursor.value.createdAt,
+        lastId: followCursor.value.id
+      });
       followVideos.value = upsertVideosKeepOrder(followVideos.value, follow.videos);
-      currentScoreFollow.value = follow.nextScore;
+      followCursor.value = follow.nextId ? { createdAt: follow.nextCreatedAt, id: follow.nextId } : null;
       return;
     }
     if (props.tab === "hot") {
@@ -216,59 +275,35 @@ async function loadMore() {
         offset: hotNextOffset.value,
         limit: 5
       });
-      hotVideos.value = hotVideos.value.concat(hot.videos);
+      // 跨分钟时合并键会重建，相邻两页可能重叠，拼接后按 ID 去重
+      hotVideos.value = dedupeById(hotVideos.value.concat(hot.videos));
       hotNextOffset.value = hot.nextOffset;
       hotHasMore.value = hot.hasMore;
       return;
     }
-    if (!currentScoreRecommend.value) return;
-    const feed = await fetchFeedVideos({ limit: 5, lastScore: currentScoreRecommend.value });
+    if (!recommendCursor.value) return;
+    const feed = await fetchFeedVideos({
+      limit: 5,
+      lastCreatedAt: recommendCursor.value.createdAt,
+      lastId: recommendCursor.value.id
+    });
     recommendVideos.value = upsertVideosKeepOrder(recommendVideos.value, feed.videos);
-    currentScoreRecommend.value = feed.nextScore;
+    recommendCursor.value = feed.nextId ? { createdAt: feed.nextCreatedAt, id: feed.nextId } : null;
   } finally {
     loading.value = false;
   }
 }
 
 async function toggleLike(videoId: number) {
-  const targetLiked = await switchVideoLike(videoId);
-  const patch = (videos: Video[]) =>
-    videos.map((item) => {
-      if (item.id !== videoId) return item;
-      const liked = targetLiked;
-      const delta = (liked ? 1 : 0) - (item.liked ? 1 : 0);
-      return {
-        ...item,
-        liked,
-        likeCount: Math.max(0, item.likeCount + delta)
-      };
-    });
-  recommendVideos.value = patch(recommendVideos.value);
-  followVideos.value = patch(followVideos.value);
-  hotVideos.value = patch(hotVideos.value);
+  await actions.toggleLike(videoId);
+}
+
+async function toggleFavorite(videoId: number) {
+  await actions.toggleFavorite(videoId);
 }
 
 async function toggleFollow(userId: number) {
-  if (!userId) return;
-  const targetFollowed = await switchFollow(userId);
-  const patchFollow = (videos: Video[]) =>
-    videos.map((item) =>
-      item.author.id === userId
-        ? {
-            ...item,
-            followed: targetFollowed
-          }
-        : item
-    );
-  recommendVideos.value = patchFollow(recommendVideos.value);
-  followVideos.value = patchFollow(followVideos.value);
-  hotVideos.value = patchFollow(hotVideos.value);
-
-  currentScoreFollow.value = "";
-  followVideos.value = [];
-  if (props.tab === "follow") {
-    await loadFollowInitial();
-  }
+  await actions.toggleFollow(userId);
 }
 
 async function loadFollowInitial() {
@@ -276,7 +311,7 @@ async function loadFollowInitial() {
   try {
     const follow = await fetchFollowVideos({ limit: 5 });
     followVideos.value = follow.videos;
-    currentScoreFollow.value = follow.nextScore;
+    followCursor.value = follow.nextId ? { createdAt: follow.nextCreatedAt, id: follow.nextId } : null;
   } finally {
     loading.value = false;
   }
@@ -290,6 +325,12 @@ function openComment(videoId: number) {
 function shareVideo(video: Video) {
   navigator.clipboard.writeText(video.playUrl).catch(() => undefined);
   showToast("已复制视频链接");
+}
+
+// openProfile 进入作者主页，自己的视频走自己主页
+function openProfile(authorId: number) {
+  if (!authorId) return;
+  router.push(`/profile/${authorId}`);
 }
 
 watch(
@@ -340,11 +381,10 @@ void loadInitial();
 
 <style scoped>
 .feed-container {
-  height: calc(100svh - 68px);
+  height: 100svh;
   overflow-y: auto;
   scroll-snap-type: y mandatory;
-  background: #000;
-  border-radius: 14px;
+  background-color: #000000;
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
@@ -359,53 +399,63 @@ void loadInitial();
   top: 50%;
   transform: translate(-50%, -50%);
   z-index: 12;
-  color: var(--text-muted);
-  font-size: 13px;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
 }
 
 .switch-nav {
   position: fixed;
-  right: 18px;
+  right: 24px;
   top: 50%;
   transform: translateY(-50%);
   z-index: 25;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 
 .switch-btn {
-  width: 34px;
-  height: 34px;
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.35);
-  background: rgba(0, 0, 0, 0.48);
-  color: #fff;
-  font-size: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+  font-size: 20px;
   line-height: 1;
   display: grid;
   place-items: center;
   cursor: pointer;
-  backdrop-filter: blur(6px);
+  backdrop-filter: blur(12px);
+  transition: transform 0.18s ease, background-color 0.18s ease, border-color 0.18s ease;
+}
+
+.switch-btn:hover:not(:disabled) {
+  transform: scale(1.08);
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.35);
 }
 
 .switch-btn:disabled {
   cursor: not-allowed;
-  opacity: 0.35;
+  opacity: 0.25;
 }
 
 .end-tip {
   position: fixed;
   left: 50%;
-  bottom: 18px;
+  bottom: calc(24px + var(--nav-space, 0px));
   transform: translateX(-50%);
   z-index: 26;
-  padding: 6px 12px;
+  padding: 8px 16px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  background: rgba(0, 0, 0, 0.45);
-  color: rgba(255, 255, 255, 0.88);
-  font-size: 12px;
-  backdrop-filter: blur(4px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(18, 18, 18, 0.75);
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 13px;
+  font-weight: 500;
+  backdrop-filter: blur(10px);
 }
 </style>

@@ -3,6 +3,7 @@ package feed
 import (
 	"github.com/gin-gonic/gin"
 
+	favoriterepo "simple_tiktok/internal/modules/favorite/repo"
 	feedrepo "simple_tiktok/internal/modules/feed/repo"
 	followrepo "simple_tiktok/internal/modules/follow/repo"
 	likerepo "simple_tiktok/internal/modules/like/repo"
@@ -20,12 +21,13 @@ const Name = "feed"
 // 视频与用户数据走别人的 repo，依赖全部来自进程级的 ServiceContext
 func NewLogic(ctx *svc.ServiceContext) *Logic {
 	return &Logic{
-		feed:     feedrepo.New(ctx.Redis),
-		videos:   videorepo.New(ctx.DB, ctx.Redis),
-		users:    userrepo.New(ctx.DB),
-		likes:    likerepo.New(ctx.Redis),
-		follows:  followrepo.New(ctx.DB, ctx.Redis),
-		uploader: ctx.Upload,
+		feed:      feedrepo.New(ctx.Redis),
+		videos:    videorepo.New(ctx.DB, ctx.Redis),
+		users:     userrepo.New(ctx.DB),
+		likes:     likerepo.New(ctx.DB, ctx.Redis),
+		favorites: favoriterepo.New(ctx.DB, ctx.Redis),
+		follows:   followrepo.New(ctx.DB, ctx.Redis),
+		uploader:  ctx.Upload,
 	}
 }
 
@@ -42,10 +44,13 @@ func RegisterHTTP(r *gin.Engine, ctx *svc.ServiceContext) (*gin.Engine, error) {
 
 func RegisterConsumers(sub *consumer.Consumer, ctx *svc.ServiceContext) error {
 	moduleLogic := NewLogic(ctx)
+	// 发布不进热度桶，新视频要等第一次互动才可能上榜，所以热度不订阅 video_created；
+	// 这里的订阅只用于写关注流索引
 	sub.Subscribe(topic.VideoCreated, moduleLogic.HandleVideoCreated)
+	sub.Subscribe(topic.FollowSwitched, moduleLogic.HandleFollowSwitched)
 	sub.Subscribe(topic.VideoDeleted, moduleLogic.HandleVideoDeleted)
 	sub.Subscribe(topic.LikeSwitched, moduleLogic.HandleLikeSwitched)
+	sub.Subscribe(topic.FavoriteSwitched, moduleLogic.HandleFavoriteSwitched)
 	sub.Subscribe(topic.CommentCreated, moduleLogic.HandleCommentCreated)
-	sub.Subscribe(topic.CommentDeleted, moduleLogic.HandleCommentDeleted)
 	return nil
 }

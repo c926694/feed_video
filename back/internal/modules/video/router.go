@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	favoriterepo "simple_tiktok/internal/modules/favorite/repo"
 	followrepo "simple_tiktok/internal/modules/follow/repo"
 	likerepo "simple_tiktok/internal/modules/like/repo"
 	userrepo "simple_tiktok/internal/modules/user/repo"
@@ -21,12 +22,14 @@ const Name = "video"
 // 别人的数据走别人的 repo，依赖全部来自进程级的 ServiceContext
 func NewLogic(ctx *svc.ServiceContext) *Logic {
 	return &Logic{
-		videos:   videorepo.New(ctx.DB, ctx.Redis),
-		users:    userrepo.New(ctx.DB),
-		likes:    likerepo.New(ctx.Redis),
-		follows:  followrepo.New(ctx.DB, ctx.Redis),
-		producer: ctx.Producer,
-		uploader: ctx.Upload,
+		videos:    videorepo.New(ctx.DB, ctx.Redis),
+		users:     userrepo.New(ctx.DB),
+		likes:     likerepo.New(ctx.DB, ctx.Redis),
+		favorites: favoriterepo.New(ctx.DB, ctx.Redis),
+		follows:   followrepo.New(ctx.DB, ctx.Redis),
+		producer:  ctx.Producer,
+		uploader:  ctx.Upload,
+		sts:       ctx.Sts,
 	}
 }
 
@@ -34,9 +37,12 @@ func RegisterHTTP(r *gin.Engine, ctx *svc.ServiceContext) (*gin.Engine, error) {
 	controller := NewController(NewLogic(ctx))
 	group := r.Group("videos")
 	{
-		group.POST("/create", ctx.Auth.Middleware(), controller.CreateVideo)
+		group.POST("/upload-credential", ctx.Auth.Middleware(), controller.UploadCredential)
+		group.POST("", ctx.Auth.Middleware(), controller.CreateVideo)
+		group.PUT("/:id", ctx.Auth.Middleware(), controller.UpdateStatus)
 		group.DELETE("/:id", ctx.Auth.Middleware(), controller.DeleteVideos)
 		group.GET("/me", ctx.Auth.Middleware(), controller.GetMyVideos)
+		group.GET("/author/:id", ctx.Auth.Middleware(), controller.ListAuthorVideos)
 		group.GET("/:id", ctx.Auth.Middleware(), controller.GetVideoInfo)
 	}
 	return r, nil
@@ -49,8 +55,7 @@ func RegisterConsumers(sub *consumer.Consumer, ctx *svc.ServiceContext) error {
 		return handleVideoDeleted(handlerCtx, payload, ctx.Upload)
 	})
 	sub.Subscribe(topic.LikeSwitched, moduleLogic.HandleLikeSwitched)
-	sub.Subscribe(topic.CommentCreated, moduleLogic.HandleCommentCreated)
-	sub.Subscribe(topic.CommentDeleted, moduleLogic.HandleCommentDeleted)
+	sub.Subscribe(topic.FavoriteSwitched, moduleLogic.HandleFavoriteSwitched)
 	sub.Subscribe(topic.UserUpdated, moduleLogic.HandleUserUpdated)
 	return nil
 }

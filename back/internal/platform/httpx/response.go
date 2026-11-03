@@ -22,9 +22,14 @@ func OK(c *gin.Context, data any) {
 
 // Fail 失败响应，业务错误按自身的错误码输出，其余错误按服务器内部错误输出并记录日志
 func Fail(c *gin.Context, err error) {
+	FailWithData(c, err, nil)
+}
+
+// FailWithData 失败响应并带上数据，用于冲突时返回已有资源
+func FailWithData(c *gin.Context, err error, data any) {
 	var appErr *AppError
 	if errors.As(err, &appErr) {
-		c.JSON(StatusOf(appErr.Code), Response{Code: appErr.Code, Msg: appErr.Msg, Data: nil})
+		c.JSON(StatusOf(appErr.Code), Response{Code: appErr.Code, Msg: appErr.Msg, Data: data})
 		return
 	}
 	slog.Error("未识别的错误", "path", c.FullPath(), "error", err)

@@ -1,7 +1,7 @@
-﻿<template>
+<template>
   <form class="panel" @submit.prevent="submit">
     <h2>发布视频</h2>
-    <p>上传封面图和视频文件，按后端 `multipart/form-data` 接口提交。</p>
+    <p>选择封面和视频文件，点击发布后自动开始上传，可在个人主页查看进度。</p>
 
     <label>
       标题
@@ -27,7 +27,7 @@
 <script setup lang="ts">
 import { reactive, ref } from "vue";
 import { useRouter } from "vue-router";
-import { createVideo } from "@/api";
+import { COVER_MAX_SIZE, VIDEO_MAX_SIZE, startUpload } from "@/composables/useUploadQueue";
 import { useToast } from "@/composables/useToast";
 
 const router = useRouter();
@@ -44,14 +44,14 @@ async function submit() {
   if (!form.cover || !form.play) return;
   loading.value = true;
   try {
-    await createVideo({
+    await startUpload({
       title: form.title,
       description: form.description,
-      cover: form.cover,
-      play: form.play
+      coverFile: form.cover,
+      playFile: form.play
     });
-    showToast("发布成功");
-    router.push("/feed");
+    showToast("已开始上传，完成后自动发布");
+    router.push("/profile");
   } finally {
     loading.value = false;
   }
@@ -59,12 +59,26 @@ async function submit() {
 
 function onCoverChange(event: Event) {
   const target = event.target as HTMLInputElement;
-  form.cover = target.files?.[0] ?? null;
+  const file = target.files?.[0] ?? null;
+  if (file && file.size > COVER_MAX_SIZE) {
+    showToast("封面不能超过 10MB");
+    target.value = "";
+    form.cover = null;
+    return;
+  }
+  form.cover = file;
 }
 
 function onPlayChange(event: Event) {
   const target = event.target as HTMLInputElement;
-  form.play = target.files?.[0] ?? null;
+  const file = target.files?.[0] ?? null;
+  if (file && file.size > VIDEO_MAX_SIZE) {
+    showToast("视频不能超过 10GB");
+    target.value = "";
+    form.play = null;
+    return;
+  }
+  form.play = file;
 }
 </script>
 

@@ -34,4 +34,6 @@ type InfoRes struct {
 	FollowCount   int64  `json:"follow_count"`
 	FollowerCount int64  `json:"follower_count"`
 	VideoCount    int64  `json:"video_count"`
+	// IsFollow 当前登录用户是否关注了他，取自己的资料时恒为 false
+	IsFollow bool `json:"is_follow"`
 }

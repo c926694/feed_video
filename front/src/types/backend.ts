@@ -45,6 +45,8 @@ export interface RawVideo {
   is_favorite?: boolean;
   is_liked?: boolean;
   is_follow?: boolean;
+  is_favorited?: boolean;
+  status?: string;
   author?: RawUser;
   user?: RawUser;
   author_name?: string;
@@ -67,6 +69,11 @@ export interface RawComment {
   is_liked?: boolean;
   is_favorite?: boolean;
   created_at?: string;
+  parent_id?: number;
+  reply_to_id?: number;
+  reply_to_user_id?: number;
+  reply_to_user_name?: string;
+  reply_count?: number;
   author?: RawUser;
   user?: RawUser;
   [key: string]: unknown;

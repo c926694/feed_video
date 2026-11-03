@@ -1,0 +1,17 @@
+# 构建上下文里不需要的东西，排除掉能显著减小上下文体积
+# 本地配置含真实凭据，配置由 compose 挂载，不要进镜像
+config/config.yaml
+
+# 临时目录与本地缓存
+.scratch/
+tmp/
+bin/
+.gocache/
+.gocache_local/
+.gomodcache_local/
+
+# 杂项
+*.log
+*.exe
+*.test
+feed_video.postman_collection.json

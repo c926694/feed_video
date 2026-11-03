@@ -6,6 +6,7 @@ import (
 	commentrepo "simple_tiktok/internal/modules/comment/repo"
 	likerepo "simple_tiktok/internal/modules/like/repo"
 	userrepo "simple_tiktok/internal/modules/user/repo"
+	videorepo "simple_tiktok/internal/modules/video/repo"
 	"simple_tiktok/internal/platform/mq/consumer"
 	"simple_tiktok/internal/platform/mq/topic"
 	"simple_tiktok/internal/svc"
@@ -19,8 +20,9 @@ const Name = "comment"
 func NewLogic(ctx *svc.ServiceContext) *Logic {
 	return &Logic{
 		comments: commentrepo.New(ctx.DB),
+		videos:   videorepo.New(ctx.DB, ctx.Redis),
 		users:    userrepo.New(ctx.DB),
-		likes:    likerepo.New(ctx.Redis),
+		likes:    likerepo.New(ctx.DB, ctx.Redis),
 		producer: ctx.Producer,
 		uploader: ctx.Upload,
 	}
@@ -32,7 +34,9 @@ func RegisterHTTP(r *gin.Engine, ctx *svc.ServiceContext) (*gin.Engine, error) {
 	{
 		group.POST("", ctx.Auth.Middleware(), controller.Create)
 		group.DELETE("/:id", ctx.Auth.Middleware(), controller.Delete)
+		group.GET("/:id", ctx.Auth.Middleware(), controller.GetOne)
 		group.GET("/list/:videoId", ctx.Auth.Middleware(), controller.List)
+		group.GET("/replies/:id", ctx.Auth.Middleware(), controller.ListReplies)
 	}
 	return r, nil
 }

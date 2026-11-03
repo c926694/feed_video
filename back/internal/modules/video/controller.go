@@ -1,6 +1,7 @@
 package video
 
 import (
+	"errors"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -17,24 +18,54 @@ func NewController(Logic *Logic) *Controller {
 	return &Controller{Logic: Logic}
 }
 
+// UploadCredential 签发直传凭证并生成存储路径
+func (h *Controller) UploadCredential(c *gin.Context) {
+	var credentialReq CredentialReq
+	if err := c.ShouldBind(&credentialReq); err != nil {
+		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "请求参数格式错误"))
+		return
+	}
+	result, err := h.Logic.UploadCredential(c.Request.Context(), auth.UserID(c), credentialReq)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	httpx.OK(c, result)
+}
+
+// CreateVideo 创建发布记录，文件由前端直传 OSS。重复提交返回冲突并带上已创建的记录。
 func (h *Controller) CreateVideo(c *gin.Context) {
-	play, err := c.FormFile("play")
-	if err != nil {
-		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "请选择要上传的视频文件"))
+	var createReq CreateReq
+	if err := c.ShouldBind(&createReq); err != nil {
+		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "请求参数格式错误"))
 		return
-	}
-	cover, err := c.FormFile("cover")
-	if err != nil {
-		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "请选择视频封面"))
-		return
-	}
-	createReq := CreateReq{
-		Title:       c.PostForm("title"),
-		Description: c.PostForm("description"),
-		Play:        play,
-		Cover:       cover,
 	}
 	result, err := h.Logic.CreateVideo(c.Request.Context(), createReq, auth.UserID(c))
+	if err != nil {
+		var appErr *httpx.AppError
+		if errors.As(err, &appErr) && appErr.Code == httpx.CodeConflict {
+			httpx.FailWithData(c, err, result)
+			return
+		}
+		httpx.Fail(c, err)
+		return
+	}
+	httpx.OK(c, result)
+}
+
+// UpdateStatus 更新发布状态：published 发布完成、failed 标记失败、created 重试
+func (h *Controller) UpdateStatus(c *gin.Context) {
+	videoID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "视频 ID 不合法"))
+		return
+	}
+	var updateReq UpdateStatusReq
+	if err = c.ShouldBind(&updateReq); err != nil {
+		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "请求参数格式错误"))
+		return
+	}
+	result, err := h.Logic.UpdateStatus(c.Request.Context(), videoID, auth.UserID(c), updateReq.Status)
 	if err != nil {
 		httpx.Fail(c, err)
 		return
@@ -56,13 +87,53 @@ func (h *Controller) GetVideoInfo(c *gin.Context) {
 	httpx.OK(c, info)
 }
 
+// ListAuthorVideos 取某个作者的已发布视频，看别人的主页时使用
+func (h *Controller) ListAuthorVideos(c *gin.Context) {
+	authorID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "用户 ID 不合法"))
+		return
+	}
+	lastCreatedAt, err := strconv.ParseInt(c.DefaultQuery("last_created_at", "0"), 10, 64)
+	if err != nil {
+		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "last_created_at 参数不合法"))
+		return
+	}
+	lastID, err := strconv.ParseUint(c.DefaultQuery("last_id", "0"), 10, 64)
+	if err != nil {
+		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "last_id 参数不合法"))
+		return
+	}
+	limit, err := strconv.ParseUint(c.DefaultQuery("limit", "20"), 10, 64)
+	if err != nil {
+		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "limit 参数不合法"))
+		return
+	}
+	res, err := h.Logic.ListAuthorVideos(c.Request.Context(), authorID, lastCreatedAt, lastID, limit, auth.UserID(c))
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	httpx.OK(c, res)
+}
+
 func (h *Controller) GetMyVideos(c *gin.Context) {
 	limit, err := strconv.ParseUint(c.DefaultQuery("limit", "60"), 10, 64)
 	if err != nil {
 		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "limit 参数不合法"))
 		return
 	}
-	list, err := h.Logic.GetMyVideos(c.Request.Context(), auth.UserID(c), limit)
+	lastCreatedAt, err := strconv.ParseInt(c.DefaultQuery("last_created_at", "0"), 10, 64)
+	if err != nil {
+		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "last_created_at 参数不合法"))
+		return
+	}
+	lastID, err := strconv.ParseUint(c.DefaultQuery("last_id", "0"), 10, 64)
+	if err != nil {
+		httpx.Fail(c, httpx.New(httpx.CodeBadRequest, "last_id 参数不合法"))
+		return
+	}
+	list, err := h.Logic.GetMyVideos(c.Request.Context(), auth.UserID(c), lastCreatedAt, lastID, limit)
 	if err != nil {
 		httpx.Fail(c, err)
 		return

@@ -16,3 +16,10 @@ type DeletedEvent struct {
 	PlayURL  string `json:"playUrl"`
 	CoverURL string `json:"coverUrl"`
 }
+
+// PrivateSwitchedEvent 视频在公开与私密之间切换，user 收到后按公开口径重新对账视频数
+type PrivateSwitchedEvent struct {
+	VideoID  uint64 `json:"videoId"`
+	AuthorID uint64 `json:"authorId"`
+	IsPrivate bool  `json:"isPrivate"`
+}

@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <header class="profile-header">
     <img v-if="user.avatar" :src="user.avatar" alt="avatar" />
     <div v-else class="avatar-fallback">{{ user.nickname.slice(0, 1) }}</div>
@@ -7,14 +7,14 @@
     <small>{{ user.bio }}</small>
 
     <div class="stats">
-      <div class="stat">
+      <button class="stat" type="button" title="查看关注列表" @click="$emit('open-following')">
         <strong>{{ user.followCount }}</strong>
         <span>关注</span>
-      </div>
-      <div class="stat">
+      </button>
+      <button class="stat" type="button" title="查看粉丝列表" @click="$emit('open-followers')">
         <strong>{{ user.followerCount }}</strong>
         <span>粉丝</span>
-      </div>
+      </button>
       <div class="stat">
         <strong>{{ videoCount }}</strong>
         <span>视频</span>
@@ -29,6 +29,11 @@ import type { User } from "@/types/domain";
 defineProps<{
   user: User;
   videoCount: number;
+}>();
+
+defineEmits<{
+  (e: "open-following"): void;
+  (e: "open-followers"): void;
 }>();
 </script>
 
@@ -84,6 +89,18 @@ small {
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.08);
   text-align: center;
+  color: inherit;
+  font: inherit;
+}
+
+/* 关注与粉丝两块可点，进对应的列表 */
+button.stat {
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+button.stat:hover {
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .stat strong {

@@ -1,32 +1,47 @@
 import { http } from "@/utils/http";
 import { normalizeUser, unwrapData } from "@/utils/normalize";
 import type { ApiEnvelope, RawUser } from "@/types/backend";
-import type { User } from "@/types/domain";
+import type { TokenPair, User } from "@/types/domain";
 
 interface LoginPayload {
   username: string;
   password: string;
 }
 
-export async function login(payload: LoginPayload) {
-  const { data } = await http.post("/users/login", payload);
-  const envelope = data as ApiEnvelope<unknown>;
-  const rawData = envelope?.data;
-  let token = "";
-  if (typeof rawData === "string") {
-    token = rawData;
-  } else if (rawData && typeof rawData === "object") {
-    const body = rawData as Record<string, unknown>;
-    token = String(body.token ?? body.access_token ?? body.jwt ?? "");
+function toTokenPair(raw: unknown): TokenPair {
+  if (!raw || typeof raw !== "object") {
+    return { accessToken: "", refreshToken: "" };
   }
+  const body = raw as Record<string, unknown>;
   return {
-    token,
-    raw: data
+    accessToken: String(body.access_token ?? body.token ?? body.jwt ?? ""),
+    refreshToken: String(body.refresh_token ?? "")
   };
+}
+
+export async function login(payload: LoginPayload): Promise<TokenPair> {
+  const { data } = await http.post("/users/login", payload);
+  return toTokenPair(unwrapData<unknown>(data));
+}
+
+// refreshTokens 用 refresh token 换一对新令牌
+export async function refreshTokens(refreshToken: string): Promise<TokenPair> {
+  const { data } = await http.post("/users/refresh", { refresh_token: refreshToken });
+  return toTokenPair(unwrapData<unknown>(data));
 }
 
 export async function fetchMe() {
   const { data } = await http.get("/users/me");
+  const body = unwrapData<RawUser | { user?: RawUser }>(data);
+  if ("user" in (body as { user?: RawUser })) {
+    return normalizeUser((body as { user?: RawUser }).user);
+  }
+  return normalizeUser(body as RawUser);
+}
+
+// fetchUserProfile 取指定用户的公开资料，看别人的主页时使用
+export async function fetchUserProfile(userId: number): Promise<User> {
+  const { data } = await http.get(`/users/${userId}`);
   const body = unwrapData<RawUser | { user?: RawUser }>(data);
   if ("user" in (body as { user?: RawUser })) {
     return normalizeUser((body as { user?: RawUser }).user);
@@ -50,8 +65,9 @@ export async function updateMyProfile(payload: { nickname?: string; avatar?: Fil
   return normalizeUser(body as RawUser);
 }
 
-export async function logout() {
-  await http.delete("/users/logout");
+// logout 提交 refresh token，服务端删除这条记录
+export async function logout(refreshToken: string) {
+  await http.delete("/users/logout", { data: { refresh_token: refreshToken } });
 }
 
 export async function registerUser(payload: { username: string; password: string; re_password: string }) {

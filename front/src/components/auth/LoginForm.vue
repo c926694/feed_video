@@ -29,7 +29,7 @@ import { useAuth } from "@/composables/useAuth";
 import { useToast } from "@/composables/useToast";
 
 const router = useRouter();
-const { setAuthToken } = useAuth();
+const { setAuth } = useAuth();
 const { showToast } = useToast();
 
 const loading = ref(false);
@@ -42,11 +42,11 @@ async function handleSubmit() {
   loading.value = true;
   try {
     const result = await login(form);
-    if (!result.token) {
+    if (!result.accessToken) {
       showToast("登录成功但未拿到 token，请检查后端返回字段。");
       return;
     }
-    setAuthToken(result.token);
+    setAuth(result);
     showToast("登录成功");
     router.push("/feed");
   } catch {

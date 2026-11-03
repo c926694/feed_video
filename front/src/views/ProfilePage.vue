@@ -1,5 +1,5 @@
 <template>
-  <section class="profile-page">
+  <section ref="pageRef" class="profile-page">
     <header class="top-bar">
       <h1>我的</h1>
       <div class="top-actions">
@@ -8,7 +8,13 @@
       </div>
     </header>
 
-    <ProfileHeader v-if="currentUser" :user="currentUser" :video-count="myVideos.length" />
+    <ProfileHeader
+      v-if="currentUser"
+      :user="currentUser"
+      :video-count="myVideos.length"
+      @open-following="openFollowList('following')"
+      @open-followers="openFollowList('followers')"
+    />
     <p v-else class="loading">正在加载个人信息...</p>
 
     <form v-if="currentUser && editing" class="edit-panel" @submit.prevent="onSaveProfile">
@@ -24,29 +30,73 @@
       <button :disabled="saving" type="submit">{{ saving ? "保存中..." : "保存资料" }}</button>
     </form>
 
-    <UserVideoGrid :videos="myVideos" />
+    <div class="tabs" role="tablist">
+      <button
+        v-for="tab in tabs"
+        :key="tab.key"
+        class="tab"
+        :class="{ active: activeTab === tab.key }"
+        role="tab"
+        :aria-selected="activeTab === tab.key"
+        @click="switchTab(tab.key)"
+      >
+        {{ tab.label }}
+      </button>
+    </div>
+
+    <div class="panel">
+      <p v-if="listLoading" class="loading">加载中...</p>
+      <template v-else>
+        <UserVideoGrid
+          :videos="activeVideos"
+          :empty-text="activeTabMeta.emptyText"
+          :manage="activeTab === 'works'"
+          :source="activeTab"
+          @changed="bootstrap"
+        />
+        <p v-if="moreLoading" class="loading">加载中...</p>
+        <p v-else-if="activeTab === 'works' && !worksHasMore && myVideos.length" class="loading">没有更多了</p>
+      </template>
+    </div>
 
     <BottomNav />
   </section>
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from "vue";
-import { useRouter } from "vue-router";
-import { fetchMe, fetchMyVideos, logout, updateMyProfile } from "@/api";
+import { computed, onMounted, onUnmounted, ref } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { fetchAllVideoPages, fetchMe, fetchMyFavorites, fetchMyLikes, fetchMyVideos, logout, updateMyProfile } from "@/api";
 import BottomNav from "@/components/layout/BottomNav.vue";
 import ProfileHeader from "@/components/profile/ProfileHeader.vue";
 import UserVideoGrid from "@/components/profile/UserVideoGrid.vue";
 import { useAuth } from "@/composables/useAuth";
+import { useLoadMoreOnScroll } from "@/composables/useLoadMoreOnScroll";
 import type { User, Video } from "@/types/domain";
 import { useToast } from "@/composables/useToast";
 
+const tabs = [
+  { key: "works", label: "作品", emptyText: "还没有可展示的视频，先去发布一个吧。" },
+  { key: "private", label: "私密作品", emptyText: "还没有私密作品，在作品里把视频设为私密即可。" },
+  { key: "favorites", label: "收藏", emptyText: "还没有收藏的视频。" },
+  { key: "likes", label: "点赞", emptyText: "还没有点赞的视频。" }
+] as const;
+
+type TabKey = (typeof tabs)[number]["key"];
+
 const router = useRouter();
-const { clearAuth } = useAuth();
+const route = useRoute();
+const { clearAuth, refreshToken } = useAuth();
 const { showToast } = useToast();
 
 const currentUser = ref<User | null>(null);
+const pageRef = ref<HTMLElement | null>(null);
 const myVideos = ref<Video[]>([]);
+const privateVideos = ref<Video[]>([]);
+const favoriteVideos = ref<Video[]>([]);
+const likeVideos = ref<Video[]>([]);
+const activeTab = ref<TabKey>("works");
+const listLoading = ref(false);
 const editing = ref(false);
 const saving = ref(false);
 const avatarFile = ref<File | null>(null);
@@ -54,17 +104,102 @@ const avatarPreview = ref("");
 const form = ref({
   nickname: ""
 });
+const worksPageSize = 20;
+const worksCursor = ref<{ createdAt: number; id: number } | null>(null);
+const worksHasMore = ref(false);
+// 私密作品要按状态筛，接口不按状态过滤，所以单独把所有页取回来再筛
+const privatePageSize = 60;
+const privateMaxPages = 5;
+
+const activeTabMeta = computed(() => tabs.find((tab) => tab.key === activeTab.value) ?? tabs[0]);
+const activeVideos = computed(() => {
+  if (activeTab.value === "favorites") return favoriteVideos.value;
+  if (activeTab.value === "likes") return likeVideos.value;
+  if (activeTab.value === "private") return privateVideos.value;
+  return myVideos.value;
+});
+
+function parseTab(raw: unknown): TabKey {
+  if (raw === "favorites" || raw === "likes" || raw === "private") return raw;
+  return "works";
+}
+
+// openFollowList 进自己的关注或粉丝列表
+function openFollowList(kind: "following" | "followers") {
+  const me = currentUser.value;
+  if (!me) return;
+  router.push(`/profile/${me.id}/${kind}`);
+}
+
+// loadWorksPage 取作品栏的一页，游标取上一条的 created_at 与 id
+async function loadWorksPage(cursor: { createdAt: number; id: number } | null) {
+  const page = await fetchMyVideos(worksPageSize, cursor ? { createdAt: cursor.createdAt, id: cursor.id } : {});
+  const last = page[page.length - 1];
+  worksCursor.value = last ? { createdAt: new Date(last.createdAt ?? 0).getTime(), id: last.id } : null;
+  worksHasMore.value = page.length === worksPageSize;
+  return page;
+}
+
+// loadMoreWorks 滚到底时接上下一页作品
+async function loadMoreWorks() {
+  if (!worksCursor.value) return;
+  const page = await loadWorksPage(worksCursor.value);
+  myVideos.value = [...myVideos.value, ...page];
+}
+
+const { loading: moreLoading } = useLoadMoreOnScroll(
+  () => pageRef.value,
+  () => activeTab.value === "works" && worksHasMore.value && !listLoading.value,
+  loadMoreWorks
+);
+
+// loadPrivateVideos 逐页取回自己的视频再筛出私密的，取到没有下一页或者到达页数上限为止
+async function loadPrivateVideos() {
+  const all: Video[] = [];
+  let cursor: { createdAt: number; id: number } | null = null;
+  for (let page = 0; page < privateMaxPages; page += 1) {
+    const items = await fetchMyVideos(privatePageSize, cursor ? { createdAt: cursor.createdAt, id: cursor.id } : {});
+    if (!items.length) break;
+    all.push(...items);
+    if (items.length < privatePageSize) break;
+    const last = items[items.length - 1];
+    cursor = { createdAt: new Date(last.createdAt ?? 0).getTime(), id: last.id };
+  }
+  privateVideos.value = all.filter((video) => video.status === "private");
+}
 
 async function bootstrap() {
   try {
     currentUser.value = await fetchMe();
-    myVideos.value = await fetchMyVideos(120);
+    myVideos.value = await loadWorksPage(null);
     if (currentUser.value) {
       currentUser.value.videoCount = Math.max(currentUser.value.videoCount, myVideos.value.length);
       form.value.nickname = currentUser.value.nickname;
     }
   } catch {
     // 错误提示已由 http 拦截器统一弹出
+  }
+}
+
+// 每次切到收藏或点赞都重新拉一遍，播放页里取消操作后回来看到的就是最新列表；
+// 私密作品那一栏单独取一次，隐藏操作之后回来看到的就是最新的
+async function switchTab(key: TabKey) {
+  activeTab.value = key;
+  if (key === "works") return;
+
+  listLoading.value = true;
+  try {
+    if (key === "private") {
+      await loadPrivateVideos();
+    } else if (key === "favorites") {
+      favoriteVideos.value = await fetchAllVideoPages(fetchMyFavorites);
+    } else {
+      likeVideos.value = await fetchAllVideoPages(fetchMyLikes);
+    }
+  } catch {
+    // 错误提示已由 http 拦截器统一弹出
+  } finally {
+    listLoading.value = false;
   }
 }
 
@@ -124,7 +259,7 @@ async function onSaveProfile() {
 
 async function onLogout() {
   try {
-    await logout();
+    await logout(refreshToken.value);
     showToast("已退出登录");
   } catch {
     // 错误提示已由 http 拦截器统一弹出
@@ -135,6 +270,10 @@ async function onLogout() {
 }
 
 onMounted(() => {
+  const initialTab = parseTab(route.query.tab);
+  if (initialTab !== "works") {
+    void switchTab(initialTab);
+  }
   void bootstrap();
 });
 
@@ -145,7 +284,9 @@ onUnmounted(() => {
 
 <style scoped>
 .profile-page {
-  min-height: 100svh;
+  height: 100%;
+  overflow-y: auto;
+  padding-bottom: calc(72px + var(--safe-bottom));
 }
 
 .top-bar {
@@ -209,5 +350,55 @@ button {
   border-radius: 50%;
   object-fit: cover;
   border: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+.tabs {
+  margin: 14px 14px 0;
+  max-width: 760px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: 1px solid var(--line);
+  border-radius: 14px 14px 0 0;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.tab {
+  padding: 12px 0;
+  border: none;
+  border-right: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.tab:last-child {
+  border-right: none;
+}
+
+.tab.active {
+  background: rgba(255, 255, 255, 0.09);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+/* 面板与页签共用一条边框，拼成一个分段控件 */
+.panel {
+  margin: -1px 14px 120px;
+  max-width: 760px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 0 0 14px 14px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+@media (min-width: 800px) {
+  .tabs,
+  .panel {
+    margin-left: auto;
+    margin-right: auto;
+  }
 }
 </style>

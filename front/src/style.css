@@ -1,13 +1,18 @@
 :root {
-  --bg-primary: #07090f;
-  --bg-secondary: #111524;
-  --text-primary: #f6f7fb;
-  --text-muted: #99a1bb;
-  --accent: #ff4d6d;
-  --accent-alt: #3dd6bf;
+  --bg-primary: #000000;
+  --bg-secondary: #121212;
+  --bg-elevated: #1e1e1e;
+  --text-primary: #ffffff;
+  --text-muted: rgba(255, 255, 255, 0.75);
+  --text-subtle: rgba(255, 255, 255, 0.45);
+  --accent: #fe2c55;
+  --accent-alt: #25f4ee;
+  --tiktok-red: #fe2c55;
+  --tiktok-cyan: #25f4ee;
+  --tiktok-yellow: #face15;
   --line: rgba(255, 255, 255, 0.12);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
-  --font-display: "Space Grotesk", "Noto Sans SC", "Segoe UI", sans-serif;
+  --font-display: "TikTok Sans", "Proxima Nova", -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans SC", sans-serif;
 }
 
 * {
@@ -20,12 +25,16 @@ body,
   width: 100%;
   height: 100%;
   margin: 0;
+  padding: 0;
+  background-color: #000000;
+  overflow: hidden;
 }
 
 body {
   font-family: var(--font-display);
-  background: radial-gradient(circle at top, #171b30 0%, var(--bg-primary) 48%);
+  background-color: var(--bg-primary);
   color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
 }
 
 a {
@@ -37,4 +46,8 @@ button,
 input,
 textarea {
   font: inherit;
+}
+
+button {
+  cursor: pointer;
 }

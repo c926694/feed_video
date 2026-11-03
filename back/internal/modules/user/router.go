@@ -3,7 +3,9 @@ package user
 import (
 	"github.com/gin-gonic/gin"
 
+	followrepo "simple_tiktok/internal/modules/follow/repo"
 	userrepo "simple_tiktok/internal/modules/user/repo"
+	videorepo "simple_tiktok/internal/modules/video/repo"
 	"simple_tiktok/internal/platform/mq/consumer"
 	"simple_tiktok/internal/platform/mq/topic"
 	"simple_tiktok/internal/svc"
@@ -16,6 +18,8 @@ const Name = "user"
 func NewLogic(ctx *svc.ServiceContext) *Logic {
 	return &Logic{
 		users:    userrepo.New(ctx.DB),
+		follows:  followrepo.New(ctx.DB, ctx.Redis),
+		videos:   videorepo.New(ctx.DB, ctx.Redis),
 		auth:     ctx.Auth,
 		uploader: ctx.Upload,
 		producer: ctx.Producer,
@@ -32,6 +36,7 @@ func RegisterHTTP(r *gin.Engine, ctx *svc.ServiceContext) (*gin.Engine, error) {
 		group.DELETE("/logout", controller.Logout)
 		group.GET("/me", ctx.Auth.Middleware(), controller.GetUserInfo)
 		group.POST("/me", ctx.Auth.Middleware(), controller.UpdateProfile)
+		group.GET("/:id", ctx.Auth.Middleware(), controller.GetOne)
 	}
 	return r, nil
 }
@@ -41,5 +46,6 @@ func RegisterConsumers(sub *consumer.Consumer, ctx *svc.ServiceContext) error {
 	sub.Subscribe(topic.FollowSwitched, moduleLogic.HandleFollowSwitched)
 	sub.Subscribe(topic.VideoCreated, moduleLogic.HandleVideoCreated)
 	sub.Subscribe(topic.VideoDeleted, moduleLogic.HandleVideoDeleted)
+	sub.Subscribe(topic.VideoPrivateSwitched, moduleLogic.HandleVideoPrivateSwitched)
 	return nil
 }
