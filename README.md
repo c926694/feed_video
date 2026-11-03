@@ -47,11 +47,11 @@ docker exec feed-broker bash /home/rocketmq/init-topics.sh
 - `mysql`：容器 `feed-mysql`，宿主机 `3307`
 - `redis`：容器 `feed-redis`，宿主机 `6380`
 - `namesrv`：容器 `feed-namesrv`，RocketMQ NameServer，宿主机 `9876`
-- `broker`：容器 `feed-broker`，RocketMQ Broker 内嵌 Proxy，remoting `10911`、gRPC `18080`
+- `broker`：容器 `feed-broker`，RocketMQ Broker 内嵌 Proxy，只对外发布 gRPC `18080`
 
 数据放在命名卷 `feed_video_mysql_data`、`feed_video_redis_data` 里，卷名带项目名，与容器名无关。
 
-`rocketmq/broker.conf` 里的 `brokerIP1=192.168.145.101` 是写死的，换机器部署要同步改。Proxy 的 gRPC 端口写在 `rocketmq/proxy.conf`（JSON 格式）里，必须与 compose 的 `18080:18080` 映射一致：Proxy 会把 `brokerIP1:grpcServerPort` 通告给客户端，端口不一致时客户端会去连一个没有 gRPC 服务的端口。
+`rocketmq/broker.conf` 的 `brokerIP1=broker` 用的是 compose 的服务名，Proxy 与后端都在同一个容器网络里按这个名字访问 Broker。`rocketmq/proxy.conf`（JSON 格式）里的 `grpcServerPort` 必须与 compose 的 `18080:18080` 映射一致：Proxy 会把 `brokerIP1:grpcServerPort` 通告给客户端，端口对不上时客户端会连到一个没有 gRPC 服务的端口。
 
 ## 四、访问与排查
 

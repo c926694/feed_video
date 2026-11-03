@@ -68,7 +68,7 @@ services:
     image: apache/rocketmq:5.3.2
     container_name: feed-broker
     restart: unless-stopped
-    # ProxyStartup 的 local 模式：同一个进程里同时提供 remoting 与 gRPC 两种端口
+    # ProxyStartup 的 local 模式：Broker 与 Proxy 在同一个进程里，只对外发布 gRPC 端口
     command: sh mqbroker --enable-proxy -c /home/rocketmq/broker.conf -pc /home/rocketmq/proxy.conf
     environment:
       TZ: Asia/Shanghai
@@ -76,9 +76,7 @@ services:
       # 默认堆是 2g、直接内存 1g，这台机器撑不住
       HEAP_OPTS: "-Xms512m -Xmx512m -Xmn256m -XX:MaxDirectMemorySize=256m"
     ports:
-      # 10911 是 remoting 端口，18080 是 gRPC 端口；容器内外都用 18080，
-      # 这样 Proxy 通告给客户端的地址和客户端实际连接的地址一致
-      - "10911:10911"
+      # 只对外发布 gRPC 端口，客户端一律走 18080
       - "18080:18080"
     volumes:
       - ./rocketmq/broker.conf:/home/rocketmq/broker.conf:ro

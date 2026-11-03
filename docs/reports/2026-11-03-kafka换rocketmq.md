@@ -46,7 +46,7 @@ rocketmq:
 
 - `broker.conf`：`brokerIP1=192.168.145.101`、`autoCreateTopicEnable=true`、`autoCreateSubscriptionGroup=true`；
 - `proxy.conf`：JSON 格式，`{"grpcServerPort": 18080}`；
-- `init-topics.sh`：创建 7 个业务 topic、7 个 `<topic>_failed`、5 个消费组。
+- `init-topics.sh`：创建 9 个业务 topic、9 个 `<topic>_failed`、8 个消费组。
 
 ### 依赖
 
@@ -61,9 +61,10 @@ rocketmq:
 | 镜像 | `apache/rocketmq:5.3.2`，592MB |
 | `feed-namesrv` | Up（`HEAP_OPTS=-Xms128m -Xmx128m -Xmn64m`） |
 | `feed-broker` | Up healthy（`HEAP_OPTS=-Xms512m -Xmx512m -Xmn256m -XX:MaxDirectMemorySize=256m`） |
+| 对外端口 | 只发布 `18080:18080`（gRPC），其他端口仅容器内部监听 |
 | proxy gRPC | `grpc server has built. port: 18080`、`rocketmq-proxy startup successfully` |
 | 裸 gRPC 探测 | `QueryRoute` 返回 `CLIENT_ID_REQUIRED`，说明 HTTP/2 通路正常 |
-| topic 初始化 | 7 个业务 topic + 7 个 `*_failed` + 5 个消费组全部创建成功 |
+| topic 初始化 | 9 个业务 topic + 9 个 `*_failed` + 8 个消费组全部创建成功，`mqadmin` 输出无异常 |
 | 消费组启动 | `feed_video_user topics=3`、`feed_video_comment topics=3`、`feed_video_feed topics=5`、`feed_video_video topics=5`、`feed_video_follow topics=1` |
 | 端到端 | `mqadmin sendMessage -t video_created` 返回 `SEND_OK`，`feed` 与 `user` 两个模块各自打印 `消息处理完成 topic=video_created` |
 
@@ -72,10 +73,11 @@ rocketmq:
 1. topic 名与消费组名只允许 `^[%|a-zA-Z0-9_-]+$`，原来的 `<topic>.failed` 与 `feed_video.user.video_created` 都非法，失败 topic 改成 `<topic>_failed`，组名改成 `feed_video_<模块名>`。
 2. gRPC 客户端 `Start()` 会按 `WithTopics` 的列表拉取路由并同步 settings；列表为空时 `syncSettings` 永远等不到结果，进程卡在「wait for sync settings finish」。生产者必须传入全部 topic。
 3. Proxy 的 gRPC 默认端口是 `8081`，宿主机 `8081` 已被 backend 占用；同时 Proxy 通告给客户端的地址必须与客户端实际连接的地址一致，所以把 `grpcServerPort` 设成 `18080`，宿主机按同名端口映射 `18080:18080`。
-4. `-pc` 指定的 proxy 配置必须是 JSON，写成 properties 会触发 `fastjson.JSONException: syntax error`。
-5. 把命名卷挂到 `/home/rocketmq/logs` 会覆盖镜像内的目录，logback 无法创建 `rocketmqlogs` 子目录，broker 反复重启（`Failed to create parent directories`）。
-6. 镜像 `/bin/sh` 是 dash，`init-topics.sh` 用了 `set -o pipefail`，必须用 bash 执行。
-7. 镜像默认堆是 broker 2g / namesrv 1g，2.4G 内存的机器必须用 `HEAP_OPTS` 压到 512m / 128m。
+4. 只对外发布 gRPC 端口时，`brokerIP1` 必须填 compose 的服务名 `broker`。填宿主机 IP 时 mqadmin 与客户端会拿这个地址去连 10911，而宿主机没有发布该端口，表现为 `connect to 192.168.145.101:10911 failed` 与 `TOPIC_NOT_FOUND`。
+5. `-pc` 指定的 proxy 配置必须是 JSON，写成 properties 会触发 `fastjson.JSONException: syntax error`。
+6. 把命名卷挂到 `/home/rocketmq/logs` 会覆盖镜像内的目录，logback 无法创建 `rocketmqlogs` 子目录，broker 反复重启（`Failed to create parent directories`）。
+7. 镜像 `/bin/sh` 是 dash，`init-topics.sh` 用了 `set -o pipefail`，必须用 bash 执行。
+8. 镜像默认堆是 broker 2g / namesrv 1g，2.4G 内存的机器必须用 `HEAP_OPTS` 压到 512m / 128m。
 
 ## 影响面
 
