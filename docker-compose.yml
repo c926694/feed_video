@@ -81,7 +81,6 @@ services:
     volumes:
       - ./rocketmq/broker.conf:/home/rocketmq/broker.conf:ro
       - ./rocketmq/proxy.conf:/home/rocketmq/proxy.conf:ro
-      - ./rocketmq/init-topics.sh:/home/rocketmq/init-topics.sh:ro
     depends_on:
       - namesrv
     healthcheck:
@@ -90,6 +89,22 @@ services:
       timeout: 10s
       retries: 12
       start_period: 40s
+
+  rocketmq-init:
+    image: apache/rocketmq:5.3.2
+    container_name: feed-rocketmq-init
+    # 一次性任务：建好 topic 与消费组后退出，backend 等它结束再启动。
+    # 脚本可重复执行，每次 up 都会重新跑一遍。
+    entrypoint: ["bash", "/home/rocketmq/init-topics.sh"]
+    restart: "no"
+    environment:
+      TZ: Asia/Shanghai
+      NAMESRV_ADDR: namesrv:9876
+    volumes:
+      - ./rocketmq/init-topics.sh:/home/rocketmq/init-topics.sh:ro
+    depends_on:
+      broker:
+        condition: service_healthy
 
   backend:
     build:
@@ -116,6 +131,8 @@ services:
         condition: service_healthy
       broker:
         condition: service_healthy
+      rocketmq-init:
+        condition: service_completed_successfully
     healthcheck:
       # /healthz 是不需要鉴权的存活探测接口
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8081/healthz || exit 1"]
