@@ -8,8 +8,8 @@ import (
 	"simple_tiktok/internal/modules/like/event"
 	"simple_tiktok/internal/modules/like/repo"
 	"simple_tiktok/internal/platform/httpx"
-	"simple_tiktok/internal/platform/kafka/producer"
-	"simple_tiktok/internal/platform/kafka/topic"
+	"simple_tiktok/internal/platform/mq/producer"
+	"simple_tiktok/internal/platform/mq/topic"
 )
 
 // Logic 点赞模块的业务逻辑

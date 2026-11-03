@@ -60,3 +60,5 @@ nginx-1.22.0-web/
 *.so
 *.dylib
 *.pdf
+
+memory*

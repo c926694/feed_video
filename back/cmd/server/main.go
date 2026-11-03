@@ -24,8 +24,9 @@ import (
 	"simple_tiktok/internal/platform/auth"
 	"simple_tiktok/internal/platform/config"
 	"simple_tiktok/internal/platform/httpx"
-	"simple_tiktok/internal/platform/kafka/consumer"
-	"simple_tiktok/internal/platform/kafka/producer"
+	"simple_tiktok/internal/platform/mq/consumer"
+	"simple_tiktok/internal/platform/mq/producer"
+	"simple_tiktok/internal/platform/mq/topic"
 	"simple_tiktok/internal/platform/mysql"
 	"simple_tiktok/internal/platform/redis"
 	"simple_tiktok/internal/platform/upload"
@@ -68,9 +69,9 @@ func main() {
 		}
 	}()
 
-	eventProducer, err := producer.New(cfg.Kafka.Brokers)
+	eventProducer, err := producer.New(cfg.RocketMQ.Endpoint, cfg.RocketMQ.AccessKey, cfg.RocketMQ.AccessSecret, topic.All())
 	if err != nil {
-		log.Fatalf("初始化 kafka 生产者失败: %v", err)
+		log.Fatalf("初始化消息生产者失败: %v", err)
 	}
 
 	authService, err := auth.New(cfg.JWT.Secret, cfg.JWT.AccessMinutes, cfg.JWT.RefreshHours, redisClient)
@@ -145,7 +146,7 @@ func main() {
 		{feed.Name, feed.RegisterConsumers},
 	}
 	for _, item := range consumerRegistrations {
-		eventConsumer := consumer.New(cfg.Kafka.Brokers, cfg.Kafka.GroupID, item.subscriber, eventProducer)
+		eventConsumer := consumer.New(cfg.RocketMQ.Endpoint, cfg.RocketMQ.AccessKey, cfg.RocketMQ.AccessSecret, cfg.RocketMQ.GroupID, item.subscriber, eventProducer)
 		if err = item.register(eventConsumer, serviceCtx); err != nil {
 			log.Fatalf("注册消费者失败: %v", err)
 		}
@@ -189,7 +190,7 @@ func main() {
 		log.Printf("服务退出: %v", err)
 	}
 	if closeErr := eventProducer.Close(); closeErr != nil {
-		log.Printf("关闭 kafka 生产者失败: %v", closeErr)
+		log.Printf("关闭消息生产者失败: %v", closeErr)
 	}
 	log.Println("服务已停止")
 }

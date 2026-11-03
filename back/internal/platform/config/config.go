@@ -21,9 +21,9 @@ type Config struct {
 	Server ServerConfig `mapstructure:"server"`
 	MySQL  MySQLConfig  `mapstructure:"mysql"`
 	Redis  RedisConfig  `mapstructure:"redis"`
-	Kafka  KafkaConfig  `mapstructure:"kafka"`
-	JWT    JWTConfig    `mapstructure:"jwt"`
-	Upload UploadConfig `mapstructure:"upload"`
+	RocketMQ RocketMQConfig `mapstructure:"rocketmq"`
+	JWT      JWTConfig      `mapstructure:"jwt"`
+	Upload   UploadConfig   `mapstructure:"upload"`
 }
 
 type ServerConfig struct {
@@ -52,9 +52,13 @@ type RedisConfig struct {
 	DB       int    `mapstructure:"db"`
 }
 
-type KafkaConfig struct {
-	Brokers []string `mapstructure:"brokers"`
-	GroupID string   `mapstructure:"group_id"`
+// RocketMQConfig 消息队列的连接参数。Endpoint 是 Proxy 的 gRPC 地址，
+// 本地部署没有开 ACL 时凭据留空即可。
+type RocketMQConfig struct {
+	Endpoint     string `mapstructure:"endpoint"`
+	AccessKey    string `mapstructure:"access_key"`
+	AccessSecret string `mapstructure:"access_secret"`
+	GroupID      string `mapstructure:"group_id"`
 }
 
 type JWTConfig struct {
@@ -112,8 +116,8 @@ func (c *Config) applyDefaults() {
 	if c.MySQL.ConnMaxLifetime <= 0 {
 		c.MySQL.ConnMaxLifetime = defaultConnMaxLifetime
 	}
-	if c.Kafka.GroupID == "" {
-		c.Kafka.GroupID = defaultGroupID
+	if c.RocketMQ.GroupID == "" {
+		c.RocketMQ.GroupID = defaultGroupID
 	}
 	if c.Upload.AvatarDir == "" {
 		c.Upload.AvatarDir = "avatar"

@@ -5,7 +5,7 @@ import (
 	"gorm.io/gorm"
 
 	"simple_tiktok/internal/platform/auth"
-	"simple_tiktok/internal/platform/kafka/producer"
+	"simple_tiktok/internal/platform/mq/producer"
 	"simple_tiktok/internal/platform/upload"
 )
 

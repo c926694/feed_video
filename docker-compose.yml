@@ -36,32 +36,44 @@ services:
       timeout: 5s
       retries: 10
 
-  kafka:
-    image: bitnami/kafka:3.7
+  namesrv:
+    image: apache/rocketmq:5.3.2
     restart: unless-stopped
+    command: sh mqnamesrv
     environment:
-      KAFKA_ENABLE_KRAFT: "yes"
-      KAFKA_CFG_NODE_ID: "1"
-      KAFKA_CFG_PROCESS_ROLES: broker,controller
-      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_CFG_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
-      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://192.168.145.101:9092
-      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
-      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
-      KAFKA_KRAFT_CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
-      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "true"
-      ALLOW_PLAINTEXT_LISTENER: "yes"
       TZ: Asia/Shanghai
+      # 启动脚本用 HEAP_OPTS 覆盖默认堆，默认值是 1g，小内存机器必须压下来
+      HEAP_OPTS: "-Xms128m -Xmx128m -Xmn64m"
     ports:
-      - "9092:9092"
+      - "9876:9876"
+
+  broker:
+    image: apache/rocketmq:5.3.2
+    restart: unless-stopped
+    # ProxyStartup 的 local 模式：同一个进程里同时提供 remoting 与 gRPC 两种端口
+    command: sh mqbroker --enable-proxy -c /home/rocketmq/broker.conf -pc /home/rocketmq/proxy.conf
+    environment:
+      TZ: Asia/Shanghai
+      NAMESRV_ADDR: namesrv:9876
+      # 默认堆是 2g、直接内存 1g，这台机器撑不住
+      HEAP_OPTS: "-Xms512m -Xmx512m -Xmn256m -XX:MaxDirectMemorySize=256m"
+    ports:
+      # 10911 是 remoting 端口，18080 是 gRPC 端口；容器内外都用 18080，
+      # 这样 Proxy 通告给客户端的地址和客户端实际连接的地址一致
+      - "10911:10911"
+      - "18080:18080"
     volumes:
-      - kafka_data:/bitnami/kafka
+      - ./rocketmq/broker.conf:/home/rocketmq/broker.conf:ro
+      - ./rocketmq/proxy.conf:/home/rocketmq/proxy.conf:ro
+      - ./rocketmq/init-topics.sh:/home/rocketmq/init-topics.sh:ro
+    depends_on:
+      - namesrv
     healthcheck:
-      test: ["CMD-SHELL", "/opt/bitnami/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "/home/rocketmq/rocketmq-5.3.2/bin/mqadmin clusterList -n namesrv:9876 2>/dev/null | grep -q broker-a"]
       interval: 10s
       timeout: 10s
-      retries: 10
-      start_period: 20s
+      retries: 12
+      start_period: 40s
 
   backend:
     build:
@@ -82,7 +94,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      kafka:
+      broker:
         condition: service_healthy
 
   web:
@@ -99,4 +111,3 @@ services:
 volumes:
   mysql_data:
   redis_data:
-  kafka_data:

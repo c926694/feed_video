@@ -6,8 +6,8 @@ import (
 	commentrepo "simple_tiktok/internal/modules/comment/repo"
 	likerepo "simple_tiktok/internal/modules/like/repo"
 	userrepo "simple_tiktok/internal/modules/user/repo"
-	"simple_tiktok/internal/platform/kafka/consumer"
-	"simple_tiktok/internal/platform/kafka/topic"
+	"simple_tiktok/internal/platform/mq/consumer"
+	"simple_tiktok/internal/platform/mq/topic"
 	"simple_tiktok/internal/svc"
 )
 

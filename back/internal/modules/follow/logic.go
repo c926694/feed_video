@@ -11,9 +11,9 @@ import (
 	"simple_tiktok/internal/modules/follow/event"
 	"simple_tiktok/internal/modules/follow/repo"
 	"simple_tiktok/internal/platform/httpx"
-	"simple_tiktok/internal/platform/kafka/consumer"
-	"simple_tiktok/internal/platform/kafka/producer"
-	"simple_tiktok/internal/platform/kafka/topic"
+	"simple_tiktok/internal/platform/mq/consumer"
+	"simple_tiktok/internal/platform/mq/producer"
+	"simple_tiktok/internal/platform/mq/topic"
 )
 
 // Logic 关注模块的业务逻辑。关注关系先写 Redis，关系表由订阅方维护。

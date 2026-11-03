@@ -20,9 +20,11 @@ redis:
   password: ""
   db: 0
 
-kafka:
-  brokers:
-    - kafka:9092
+rocketmq:
+  # ProxyStartup 的 gRPC 地址，端口与 rocketmq/proxy.conf 里的 grpcServerPort 保持一致
+  endpoint: broker:18080
+  access_key: ""
+  access_secret: ""
   group_id: feed_video
 
 jwt:
